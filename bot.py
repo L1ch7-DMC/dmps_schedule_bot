@@ -8,6 +8,20 @@ from dotenv import load_dotenv
 from datetime import datetime, date, time as dt_time, timedelta, timezone
 from urllib.parse import urljoin
 import re
+import threading
+from flask import Flask
+
+# Flaskアプリの初期化
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Discord bot is running!"
+
+def run_flask():
+    # RenderはPORT環境変数を使用します
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
 
 # --- 設定 ---
 load_dotenv()
@@ -250,4 +264,8 @@ if __name__ == '__main__':
     if TOKEN is None or CHANNEL_ID == 0:
         print("エラー: .envファイルで DISCORD_BOT_TOKEN または DISCORD_CHANNEL_ID を設定してください。")
     else:
+        # Flaskサーバーを別スレッドで起動
+        flask_thread = threading.Thread(target=run_flask)
+        flask_thread.start()
+        # Discordボットを起動
         bot.run(TOKEN)
