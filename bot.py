@@ -22,6 +22,10 @@ def run_flask():
     # RenderはPORT環境変数を使用します
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+    
+    def keep_alive():
+        t = Thread(target=run)
+        t.start()
 
 # --- 設定 ---
 load_dotenv()
