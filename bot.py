@@ -274,4 +274,5 @@ if __name__ == '__main__':
         flask_thread = threading.Thread(target=run_flask)
         flask_thread.start()
         # Discordボットを起動
+        keep_alive()
         bot.run(TOKEN)
