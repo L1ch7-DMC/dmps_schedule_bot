@@ -12,6 +12,7 @@ from urllib.parse import urljoin
 import re
 import threading
 from flask import Flask
+import random # Add random module for dice rolling
 
 # Flaskアプリの初期化
 app = Flask(__name__)
@@ -218,6 +219,39 @@ async def next_tournament(ctx):
         await ctx.send("現在予定されている大会はないぞ！")
     
     print(f"--- `!next` command finished ---")
+
+@bot.command(name='roll')
+async def roll_dice(ctx, dice_notation: str):
+    """
+    指定された形式 (例: 3d6) でサイコロを振り、結果を返します。
+    """
+    print(f"--- `!roll {dice_notation}` command executed by {ctx.author} ---")
+    try:
+        num_dice, num_sides = map(int, dice_notation.lower().split('d'))
+    except ValueError:
+        await ctx.send("サイコロの形式が正しくないぞ！例: `!roll 3d6`")
+        print(f"--- `!roll` command finished: Invalid format '{dice_notation}' ---")
+        return
+
+    if num_dice <= 0 or num_sides <= 0:
+        await ctx.send("サイコロの数と面数は正の整数である必要があるぞ！")
+        print(f"--- `!roll` command finished: Invalid numbers '{dice_notation}' ---")
+        return
+    
+    if num_dice > 100:
+        await ctx.send("一度に振れるサイコロは100個までだぞ！")
+        print(f"--- `!roll` command finished: Too many dice '{num_dice}' ---")
+        return
+
+    rolls = [random.randint(1, num_sides) for _ in range(num_dice)]
+    total = sum(rolls)
+
+    result_message = (
+        f"{ctx.author.mention} が `{dice_notation}` を振ったぞ！\n"
+        f"出目: {', '.join(map(str, rolls))}"
+    )
+    await ctx.send(result_message)
+    print(f"--- `!roll` command finished: Result {total} from {rolls} ---")
 
 async def send_today_tournaments(channel):
     """今日の大会情報を指定されたチャンネルに送信する共通関数"""
