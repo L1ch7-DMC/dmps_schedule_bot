@@ -162,12 +162,6 @@ def fetch_and_parse_tournaments():
         print(f"[LOG] fetch_and_parse_tournaments: 予期せぬエラーが発生しました: {e}")
         return []
 
-@bot.command(name='hello')
-async def hello(ctx):
-    """簡単な挨拶を返すテストコマンド"""
-    print(f"`!hello` command executed by {ctx.author}")
-    await ctx.send('Hello!')
-
 @bot.command(name='next')
 async def next_tournament(ctx):
     """直近の大会情報を通知するコマンド"""
