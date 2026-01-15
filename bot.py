@@ -123,54 +123,93 @@ def fetch_and_parse_tournaments():
 
 # --- プロフィール登録用UI ---
 class AchievementModal(ui.Modal, title='実績情報の登録'):
-    top100 = ui.TextInput(label=PROFILE_ITEMS["top100"], style=TextStyle.short, required=False, placeholder="例: 1")
-    nd_rate = ui.TextInput(label=PROFILE_ITEMS["nd_rate"], style=TextStyle.short, required=False, placeholder="例: 1600")
-    ad_rate = ui.TextInput(label=PROFILE_ITEMS["ad_rate"], style=TextStyle.short, required=False, placeholder="例: 1600")
-    player_id = ui.TextInput(label=PROFILE_ITEMS["player_id"], style=TextStyle.short, required=False, placeholder="例: 123456789")
-    achievements = ui.TextInput(label=PROFILE_ITEMS["achievements"], style=TextStyle.paragraph, required=False, placeholder="例: ドルマゲドンXCUP最終1位")
+    def __init__(self, user: discord.User):
+        super().__init__()
+        user_data = load_members_data().get(str(user.id), {})
+
+        self.top100 = ui.TextInput(label=PROFILE_ITEMS["top100"], style=TextStyle.short, required=False, placeholder="例: 1", default=str(user_data.get("top100", "")))
+        self.nd_rate = ui.TextInput(label=PROFILE_ITEMS["nd_rate"], style=TextStyle.short, required=False, placeholder="例: 1600", default=str(user_data.get("nd_rate", "")))
+        self.ad_rate = ui.TextInput(label=PROFILE_ITEMS["ad_rate"], style=TextStyle.short, required=False, placeholder="例: 1600", default=str(user_data.get("ad_rate", "")))
+        self.achievements = ui.TextInput(label=PROFILE_ITEMS["achievements"], style=TextStyle.paragraph, required=False, placeholder="例: ドルマゲドンXCUP最終1位", default=user_data.get("achievements", ""))
+        
+        self.add_item(self.top100)
+        self.add_item(self.nd_rate)
+        self.add_item(self.ad_rate)
+        self.add_item(self.achievements)
 
     async def on_submit(self, interaction: Interaction):
         user_id = str(interaction.user.id)
         data = load_members_data()
         user_data = data.setdefault(user_id, {})
-        for item_key, text_input in [("top100", self.top100), ("nd_rate", self.nd_rate), ("ad_rate", self.ad_rate), ("player_id", self.player_id)]:
+        
+        # 数値項目を処理
+        for item_key, text_input in [("top100", self.top100), ("nd_rate", self.nd_rate), ("ad_rate", self.ad_rate)]:
             if text_input.value:
                 try:
                     user_data[item_key] = int(text_input.value)
                 except ValueError:
                     await interaction.response.send_message(f"「{PROFILE_ITEMS[item_key]}」には数値を入力してください。", ephemeral=True); return
-            elif item_key in user_data: del user_data[item_key]
-        user_data["achievements"] = self.achievements.value or user_data.get("achievements")
+            elif item_key in user_data:
+                del user_data[item_key]
+        
+        # テキスト項目を処理
+        if self.achievements.value:
+            user_data["achievements"] = self.achievements.value
+        elif "achievements" in user_data:
+            del user_data["achievements"]
+            
         save_members_data(data)
         await interaction.response.send_message('実績情報を更新したぞ！', ephemeral=True)
 
 class PersonalInfoModal(ui.Modal, title='個人情報の登録'):
-    age = ui.TextInput(label=PROFILE_ITEMS["age"], style=TextStyle.short, required=False, placeholder="例: 20")
-    birthday = ui.TextInput(label=PROFILE_ITEMS["birthday"], style=TextStyle.short, required=False, placeholder="例: 01-15 (MM-DD形式)")
+    def __init__(self, user: discord.User):
+        super().__init__()
+        user_data = load_members_data().get(str(user.id), {})
+
+        self.player_id = ui.TextInput(label=PROFILE_ITEMS["player_id"], style=TextStyle.short, required=False, placeholder="例: 123456789", default=str(user_data.get("player_id", "")))
+        self.age = ui.TextInput(label=PROFILE_ITEMS["age"], style=TextStyle.short, required=False, placeholder="例: 20", default=str(user_data.get("age", "")))
+        self.birthday = ui.TextInput(label=PROFILE_ITEMS["birthday"], style=TextStyle.short, required=False, placeholder="例: 01-15 (MM-DD形式)", default=user_data.get("birthday", ""))
+
+        self.add_item(self.player_id)
+        self.add_item(self.age)
+        self.add_item(self.birthday)
 
     async def on_submit(self, interaction: Interaction):
         user_id = str(interaction.user.id)
         data = load_members_data()
         user_data = data.setdefault(user_id, {})
+
+        if self.player_id.value:
+            try:
+                user_data["player_id"] = int(self.player_id.value)
+            except ValueError:
+                await interaction.response.send_message(f"「{PROFILE_ITEMS['player_id']}」には数値を入力してください。", ephemeral=True); return
+        elif "player_id" in user_data:
+            del user_data["player_id"]
+
         if self.age.value:
             try:
                 user_data["age"] = int(self.age.value)
             except ValueError: await interaction.response.send_message(f"「{PROFILE_ITEMS['age']}」には数値を入力してください。", ephemeral=True); return
         elif "age" in user_data: del user_data["age"]
+        
         if self.birthday.value:
             if not re.fullmatch(r"\d{2}-\d{2}", self.birthday.value):
                 await interaction.response.send_message(f"「{PROFILE_ITEMS['birthday']}」は `MM-DD` 形式で入力してください。", ephemeral=True); return
             user_data["birthday"] = self.birthday.value
         elif "birthday" in user_data: del user_data["birthday"]
+        
         save_members_data(data)
         await interaction.response.send_message('個人情報を更新したぞ！', ephemeral=True)
 
 class RegisterView(ui.View):
     def __init__(self): super().__init__(timeout=180)
     @ui.button(label="実績を登録", style=discord.ButtonStyle.primary)
-    async def register_achievements(self, interaction: Interaction, button: ui.Button): await interaction.response.send_modal(AchievementModal())
+    async def register_achievements(self, interaction: Interaction, button: ui.Button):
+        await interaction.response.send_modal(AchievementModal(user=interaction.user))
     @ui.button(label="個人情報を登録", style=discord.ButtonStyle.secondary)
-    async def register_personal_info(self, interaction: Interaction, button: ui.Button): await interaction.response.send_modal(PersonalInfoModal())
+    async def register_personal_info(self, interaction: Interaction, button: ui.Button):
+        await interaction.response.send_modal(PersonalInfoModal(user=interaction.user))
 
 # --- スラッシュコマンド ---
 @bot.tree.command(name="register", description="あなたのプロフィール情報を登録・更新します。")
@@ -311,6 +350,21 @@ async def check_birthdays_today():
     birthday_members = [user_id for user_id, user_data in all_data.items() if user_data.get('birthday') == today_str]
 
     if birthday_members:
+        # 年齢をインクリメントする処理
+        for user_id in birthday_members:
+            user_data = all_data.get(user_id)
+            if user_data and 'age' in user_data:
+                try:
+                    current_age = int(user_data['age'])
+                    user_data['age'] = current_age + 1
+                    print(f"[LOG] Incremented age for user {user_id} to {user_data['age']}")
+                except (ValueError, TypeError):
+                    print(f"[LOG] Could not increment age for user {user_id}. 'age' is not a valid number.")
+        
+        # 変更を保存
+        save_members_data(all_data)
+
+        # 誕生日通知メッセージを送信
         mentions = [f"<@{user_id}>" for user_id in birthday_members]
         message = (f"@everyone\n🎉🎂ハッピーバースデー！🎂🎉\n"
                    f"今日は {', '.join(mentions)} さんのお誕生日だ！みんなでお祝いするぞ！🥳")
