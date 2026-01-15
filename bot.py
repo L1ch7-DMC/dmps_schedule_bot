@@ -314,7 +314,7 @@ async def check_birthdays_today():
     if birthday_members:
         mentions = [f"<@{user_id}>" for user_id in birthday_members]
         message = (f"@everyone\n🎉🎂ハッピーバースデー！🎂🎉\n"
-                   f"今日は {', '.join(mentions)} さんのお誕生日です！みんなでお祝いしよう！🥳")
+                   f"今日は {', '.join(mentions)} さんのお誕生日だ！みんなでお祝いするぞ！🥳")
         await channel.send(message)
 
 # --- メイン実行ブロック ---
