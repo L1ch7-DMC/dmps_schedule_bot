@@ -29,7 +29,7 @@ BASE_URL = "https://dmps-tournament.takaratomy.co.jp/schedulehost.asp"
 MEMBERS_DATA_FILE = "members_data.json"
 JST = timezone(timedelta(hours=+9), 'JST')
 NOTIFY_TIME = dt_time(18, 0, 0, tzinfo=JST)
-BIRTHDAY_NOTIFY_TIME = dt_time(0, 0, 0, tzinfo=JST) # 午前9時に誕生日を通知
+BIRTHDAY_NOTIFY_TIME = dt_time(0, 0, 0, tzinfo=JST) # 午前0時に誕生日を通知
 BIRTHDAY_CHANNEL_ID = int(os.getenv('BIRTHDAY_CHANNEL_ID')) if os.getenv('BIRTHDAY_CHANNEL_ID')
      else 0
 # --- Botのセットアップ ---
