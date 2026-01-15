@@ -1,6 +1,3 @@
-
-
-
 import os
 import time
 import requests
@@ -16,21 +13,23 @@ import re
 import threading
 from flask import Flask
 import random
-import json
+import psycopg2
+import psycopg2.extras
 
 # --- 設定 ---
 load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+DATABASE_URL = os.getenv('DATABASE_URL')
 CHANNEL_ID = int(os.getenv('DISCORD_CHANNEL_ID')) if os.getenv('DISCORD_CHANNEL_ID') else 0
 ADMIN_ROLE_NAMES_STR = os.getenv('ADMIN_ROLE_NAMES')
 ADMIN_ROLES = [role.strip() for role in ADMIN_ROLE_NAMES_STR.split(',')] if ADMIN_ROLE_NAMES_STR else []
 
 BASE_URL = "https://dmps-tournament.takaratomy.co.jp/schedulehost.asp"
-MEMBERS_DATA_FILE = "members_data.json"
 JST = timezone(timedelta(hours=+9), 'JST')
 NOTIFY_TIME = dt_time(18, 0, 0, tzinfo=JST)
 BIRTHDAY_NOTIFY_TIME = dt_time(0, 0, 0, tzinfo=JST) # 午前0時に誕生日を通知
 BIRTHDAY_CHANNEL_ID = int(os.getenv('BIRTHDAY_CHANNEL_ID')) if os.getenv('BIRTHDAY_CHANNEL_ID') else 0
+
 # --- Botのセットアップ ---
 intents = discord.Intents.default()
 intents.members = True
@@ -47,17 +46,37 @@ def keep_alive_thread():
     t = threading.Thread(target=run_flask)
     t.start()
 
-# --- JSONデータ管理 ---
-def load_members_data():
-    if not os.path.exists(MEMBERS_DATA_FILE): return {}
-    try:
-        with open(MEMBERS_DATA_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError): return {}
+# --- データベース管理 ---
+def get_db_connection():
+    if not DATABASE_URL:
+        raise ValueError("DATABASE_URL environment variable is not set.")
+    return psycopg2.connect(DATABASE_URL)
 
-def save_members_data(data):
-    with open(MEMBERS_DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+def setup_database():
+    conn = get_db_connection()
+    with conn.cursor() as cur:
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                top100 INT,
+                nd_rate INT,
+                ad_rate INT,
+                player_id BIGINT,
+                achievements TEXT,
+                age INT,
+                birthday VARCHAR(5)
+            )
+        ''')
+    conn.commit()
+    conn.close()
+
+def get_user_profile(user_id):
+    conn = get_db_connection()
+    with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+        cur.execute("SELECT * FROM users WHERE user_id = %s", (user_id,))
+        user_data = cur.fetchone()
+    conn.close()
+    return user_data
 
 # --- プロフィール項目定義 ---
 PROFILE_ITEMS = {
@@ -66,7 +85,7 @@ PROFILE_ITEMS = {
 }
 NUMERIC_ITEMS = ["top100", "nd_rate", "ad_rate", "player_id", "age"]
 
-# --- Webスクレイピング関数 ---
+# --- Webスクレイピング関数 (変更なし) ---
 def get_tonamel_url(details_page_url):
     try:
         response = requests.get(details_page_url)
@@ -123,9 +142,9 @@ def fetch_and_parse_tournaments():
 
 # --- プロフィール登録用UI ---
 class AchievementModal(ui.Modal, title='実績情報の登録'):
-    def __init__(self, user: discord.User):
+    def __init__(self, user_data: Optional[psycopg2.extras.DictCursor]):
         super().__init__()
-        user_data = load_members_data().get(str(user.id), {})
+        user_data = user_data or {}
 
         self.top100 = ui.TextInput(label=PROFILE_ITEMS["top100"], style=TextStyle.short, required=False, placeholder="例: 1", default=str(user_data.get("top100", "")))
         self.nd_rate = ui.TextInput(label=PROFILE_ITEMS["nd_rate"], style=TextStyle.short, required=False, placeholder="例: 1600", default=str(user_data.get("nd_rate", "")))
@@ -138,33 +157,43 @@ class AchievementModal(ui.Modal, title='実績情報の登録'):
         self.add_item(self.achievements)
 
     async def on_submit(self, interaction: Interaction):
-        user_id = str(interaction.user.id)
-        data = load_members_data()
-        user_data = data.setdefault(user_id, {})
+        user_id = interaction.user.id
+        updates = {}
         
-        # 数値項目を処理
         for item_key, text_input in [("top100", self.top100), ("nd_rate", self.nd_rate), ("ad_rate", self.ad_rate)]:
             if text_input.value:
                 try:
-                    user_data[item_key] = int(text_input.value)
+                    updates[item_key] = int(text_input.value)
                 except ValueError:
                     await interaction.response.send_message(f"「{PROFILE_ITEMS[item_key]}」には数値を入力してください。", ephemeral=True); return
-            elif item_key in user_data:
-                del user_data[item_key]
-        
-        # テキスト項目を処理
-        if self.achievements.value:
-            user_data["achievements"] = self.achievements.value
-        elif "achievements" in user_data:
-            del user_data["achievements"]
-            
-        save_members_data(data)
-        await interaction.response.send_message('実績情報を更新したぞ！', ephemeral=True)
+            else:
+                updates[item_key] = None
+
+        updates["achievements"] = self.achievements.value if self.achievements.value else None
+
+        try:
+            conn = get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO users (user_id, top100, nd_rate, ad_rate, achievements)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        top100 = EXCLUDED.top100,
+                        nd_rate = EXCLUDED.nd_rate,
+                        ad_rate = EXCLUDED.ad_rate,
+                        achievements = EXCLUDED.achievements;
+                """, (user_id, updates.get("top100"), updates.get("nd_rate"), updates.get("ad_rate"), updates.get("achievements")))
+            conn.commit()
+            conn.close()
+            await interaction.response.send_message('実績情報を更新したぞ！', ephemeral=True)
+        except Exception as e:
+            print(f"DB Error on AchievementModal submit: {e}")
+            await interaction.response.send_message('エラーで更新できなかったぞ！', ephemeral=True)
 
 class PersonalInfoModal(ui.Modal, title='個人情報の登録'):
-    def __init__(self, user: discord.User):
+    def __init__(self, user_data: Optional[psycopg2.extras.DictCursor]):
         super().__init__()
-        user_data = load_members_data().get(str(user.id), {})
+        user_data = user_data or {}
 
         self.player_id = ui.TextInput(label=PROFILE_ITEMS["player_id"], style=TextStyle.short, required=False, placeholder="例: 123456789", default=str(user_data.get("player_id", "")))
         self.age = ui.TextInput(label=PROFILE_ITEMS["age"], style=TextStyle.short, required=False, placeholder="例: 20", default=str(user_data.get("age", "")))
@@ -175,57 +204,80 @@ class PersonalInfoModal(ui.Modal, title='個人情報の登録'):
         self.add_item(self.birthday)
 
     async def on_submit(self, interaction: Interaction):
-        user_id = str(interaction.user.id)
-        data = load_members_data()
-        user_data = data.setdefault(user_id, {})
+        user_id = interaction.user.id
+        updates = {}
 
         if self.player_id.value:
-            try:
-                user_data["player_id"] = int(self.player_id.value)
-            except ValueError:
-                await interaction.response.send_message(f"「{PROFILE_ITEMS['player_id']}」には数値を入力してください。", ephemeral=True); return
-        elif "player_id" in user_data:
-            del user_data["player_id"]
+            try: updates["player_id"] = int(self.player_id.value)
+            except ValueError: await interaction.response.send_message(f"「{PROFILE_ITEMS['player_id']}」には数値を入力してください。", ephemeral=True); return
+        else: updates["player_id"] = None
 
         if self.age.value:
-            try:
-                user_data["age"] = int(self.age.value)
+            try: updates["age"] = int(self.age.value)
             except ValueError: await interaction.response.send_message(f"「{PROFILE_ITEMS['age']}」には数値を入力してください。", ephemeral=True); return
-        elif "age" in user_data: del user_data["age"]
+        else: updates["age"] = None
         
         if self.birthday.value:
             if not re.fullmatch(r"\d{2}-\d{2}", self.birthday.value):
                 await interaction.response.send_message(f"「{PROFILE_ITEMS['birthday']}」は `MM-DD` 形式で入力してください。", ephemeral=True); return
-            user_data["birthday"] = self.birthday.value
-        elif "birthday" in user_data: del user_data["birthday"]
+            updates["birthday"] = self.birthday.value
+        else: updates["birthday"] = None
         
-        save_members_data(data)
-        await interaction.response.send_message('個人情報を更新したぞ！', ephemeral=True)
+        try:
+            conn = get_db_connection()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO users (user_id, player_id, age, birthday)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        player_id = EXCLUDED.player_id,
+                        age = EXCLUDED.age,
+                        birthday = EXCLUDED.birthday;
+                """, (user_id, updates.get("player_id"), updates.get("age"), updates.get("birthday")))
+            conn.commit()
+            conn.close()
+            await interaction.response.send_message('個人情報を更新したぞ！', ephemeral=True)
+        except Exception as e:
+            print(f"DB Error on PersonalInfoModal submit: {e}")
+            await interaction.response.send_message('エラーで更新できなかったぞ！', ephemeral=True)
 
 class RegisterView(ui.View):
-    def __init__(self): super().__init__(timeout=180)
+    def __init__(self, user_id: int):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+
+    async def get_user_data(self):
+        return get_user_profile(self.user_id)
+
     @ui.button(label="実績を登録", style=discord.ButtonStyle.primary)
     async def register_achievements(self, interaction: Interaction, button: ui.Button):
-        await interaction.response.send_modal(AchievementModal(user=interaction.user))
+        user_data = await self.get_user_data()
+        await interaction.response.send_modal(AchievementModal(user_data=user_data))
+
     @ui.button(label="個人情報を登録", style=discord.ButtonStyle.secondary)
     async def register_personal_info(self, interaction: Interaction, button: ui.Button):
-        await interaction.response.send_modal(PersonalInfoModal(user=interaction.user))
+        user_data = await self.get_user_data()
+        await interaction.response.send_modal(PersonalInfoModal(user_data=user_data))
 
 # --- スラッシュコマンド ---
 @bot.tree.command(name="register", description="あなたのプロフィール情報を登録・更新します。")
-async def register_slash(interaction: Interaction): await interaction.response.send_message("登録したい情報の種類を選んでください。", view=RegisterView(), ephemeral=True)
+async def register_slash(interaction: Interaction):
+    await interaction.response.send_message("登録したい情報の種類を選んでください。", view=RegisterView(user_id=interaction.user.id), ephemeral=True)
 
 @bot.tree.command(name="profile", description="メンバーの情報を表示します。")
 @app_commands.describe(user="情報を表示したいメンバー (指定がなければ自分)")
 async def profile_slash(interaction: Interaction, user: Optional[discord.Member] = None):
     target_user = user or interaction.user
-    user_data = load_members_data().get(str(target_user.id))
-    if not user_data:
+    user_data = get_user_profile(target_user.id)
+    
+    if not user_data or not any(user_data[key] for key in PROFILE_ITEMS):
         message = f"{target_user.display_name}の情報はまだ登録されていません。" + ("\n`/register`で登録してみよう！" if target_user == interaction.user else "")
         await interaction.response.send_message(message, ephemeral=True); return
+
     embed = Embed(title=f"{target_user.display_name}のプロフィール", color=target_user.color).set_thumbnail(url=target_user.display_avatar.url)
     for key, label in PROFILE_ITEMS.items():
-        if key in user_data: embed.add_field(name=label, value=user_data[key], inline=True)
+        if key in user_data and user_data[key] is not None:
+            embed.add_field(name=label, value=user_data[key], inline=True)
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="next", description="直近の大会情報を表示します。")
@@ -265,32 +317,47 @@ profile_admin = app_commands.Group(name="profile_admin", description="管理者�
 @app_commands.choices(item=[app_commands.Choice(name=label, value=key) for key, label in PROFILE_ITEMS.items()])
 @app_commands.checks.has_any_role(*ADMIN_ROLES)
 async def profile_admin_set(interaction: Interaction, user: discord.Member, item: app_commands.Choice[str], value: str):
-    user_id, item_key, item_name = str(user.id), item.value, item.name
-    data = load_members_data()
-    user_data = data.setdefault(user_id, {})
-    if item_key in NUMERIC_ITEMS:
-        try: user_data[item_key] = int(value)
-        except ValueError: await interaction.response.send_message(f"「{item_name}」には数値を入力する必要があります。", ephemeral=True); return
-    elif item_key == "birthday":
-        if not re.fullmatch(r"\d{2}-\d{2}", value):
-            await interaction.response.send_message(f"「{item_name}」は `MM-DD` 形式で入力する必要があります。", ephemeral=True); return
-        user_data[item_key] = value
-    else: user_data[item_key] = value
-    save_members_data(data)
-    await interaction.response.send_message(f"{user.display_name}の「{item_name}」を更新しました。", ephemeral=True)
+    user_id, item_key, item_name = user.id, item.value, item.name
+    
+    processed_value = None
+    if value.strip().lower() not in ['none', 'null', '']:
+        if item_key in NUMERIC_ITEMS:
+            try: processed_value = int(value)
+            except ValueError: await interaction.response.send_message(f"「{item_name}」には数値を入力する必要があります。", ephemeral=True); return
+        elif item_key == "birthday":
+            if not re.fullmatch(r"\d{2}-\d{2}", value):
+                await interaction.response.send_message(f"「{item_name}」は `MM-DD` 形式で入力する必要があります。", ephemeral=True); return
+            processed_value = value
+        else:
+            processed_value = value
+
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            # 動的にSQLを組み立てるが、カラム名は固定値なので安全
+            sql = f"INSERT INTO users (user_id, {item_key}) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET {item_key} = %s;"
+            cur.execute(sql, (user_id, processed_value, processed_value))
+        conn.commit()
+        conn.close()
+        await interaction.response.send_message(f"{user.display_name}の「{item_name}」を更新しました。", ephemeral=True)
+    except Exception as e:
+        print(f"DB Error on admin set: {e}")
+        await interaction.response.send_message("DBエラーにより更新できませんでした。", ephemeral=True)
 
 @profile_admin.command(name="delete", description="指定したユーザーのプロフィール情報をすべて削除します。")
 @app_commands.describe(user="情報を削除するユーザー")
 @app_commands.checks.has_any_role(*ADMIN_ROLES)
 async def profile_admin_delete(interaction: Interaction, user: discord.Member):
-    user_id = str(user.id)
-    data = load_members_data()
-    if user_id in data:
-        del data[user_id]
-        save_members_data(data)
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM users WHERE user_id = %s", (user.id,))
+        conn.commit()
+        conn.close()
         await interaction.response.send_message(f"{user.display_name}のプロフィール情報を削除しました。", ephemeral=True)
-    else:
-        await interaction.response.send_message(f"{user.display_name}のプロフィール情報は登録されていません。", ephemeral=True)
+    except Exception as e:
+        print(f"DB Error on admin delete: {e}")
+        await interaction.response.send_message("DBエラーにより削除できませんでした。", ephemeral=True)
 bot.tree.add_command(profile_admin)
 
 # --- イベントハンドラ ---
@@ -298,9 +365,16 @@ bot.tree.add_command(profile_admin)
 async def on_ready():
     print(f'Logged in as {bot.user}')
     try:
+        setup_database()
+        print("Database setup successful.")
+    except Exception as e:
+        print(f"Database setup failed: {e}")
+    
+    try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s)")
     except Exception as e: print(f"Failed to sync commands: {e}")
+    
     if not check_tournaments_today.is_running(): check_tournaments_today.start()
     if not check_birthdays_today.is_running(): check_birthdays_today.start()
 
@@ -346,34 +420,35 @@ async def check_birthdays_today():
         return
 
     today_str = datetime.now(JST).strftime('%m-%d')
-    all_data = load_members_data()
-    birthday_members = [user_id for user_id, user_data in all_data.items() if user_data.get('birthday') == today_str]
+    
+    try:
+        conn = get_db_connection()
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            # 今日の誕生日のユーザーを取得
+            cur.execute("SELECT user_id, age FROM users WHERE birthday = %s", (today_str,))
+            birthday_users = cur.fetchall()
 
-    if birthday_members:
-        # 年齢をインクリメントする処理
-        for user_id in birthday_members:
-            user_data = all_data.get(user_id)
-            if user_data and 'age' in user_data:
-                try:
-                    current_age = int(user_data['age'])
-                    user_data['age'] = current_age + 1
-                    print(f"[LOG] Incremented age for user {user_id} to {user_data['age']}")
-                except (ValueError, TypeError):
-                    print(f"[LOG] Could not increment age for user {user_id}. 'age' is not a valid number.")
-        
-        # 変更を保存
-        save_members_data(all_data)
+            if birthday_users:
+                # 年齢をインクリメント
+                user_ids_to_update = [user['user_id'] for user in birthday_users if user['age'] is not None]
+                if user_ids_to_update:
+                    cur.execute("UPDATE users SET age = age + 1 WHERE user_id = ANY(%s)", (user_ids_to_update,))
+                    print(f"[LOG] Incremented age for users: {user_ids_to_update}")
 
-        # 誕生日通知メッセージを送信
-        mentions = [f"<@{user_id}>" for user_id in birthday_members]
-        message = (f"@everyone\n🎉🎂ハッピーバースデー！🎂🎉\n"
-                   f"今日は {', '.join(mentions)} さんのお誕生日だ！みんなでお祝いするぞ！🥳")
-        await channel.send(message)
+                # 誕生日通知メッセージを送信
+                mentions = [f"<@{user['user_id']}>" for user in birthday_users]
+                message = (f"@everyone\n🎉🎂ハッピーバースデー！🎂🎉\n"
+                           f"今日は {', '.join(mentions)} さんのお誕生日だ！みんなでお祝いするぞ！🥳")
+                await channel.send(message)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"DB Error in birthday task: {e}")
 
 # --- メイン実行ブロック ---
 if __name__ == '__main__':
     if TOKEN is None: print("エラー: .envファイルで DISCORD_BOT_TOKEN を設定してください。")
+    elif DATABASE_URL is None: print("エラー: .envファイルまたは環境変数で DATABASE_URL を設定してください。")
     else:
         keep_alive_thread()
         bot.run(TOKEN)
-
