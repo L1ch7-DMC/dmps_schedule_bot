@@ -311,6 +311,10 @@ async def roll_dice_slash(interaction: Interaction, dice: str):
     except ValueError:
         await interaction.response.send_message("サイコロの形式が正しくないぞ！例: `3d6`", ephemeral=True)
 
+@bot.tree.command(name="note", description="メンバー紹介noteのURLを送信します。")
+async def note_slash(interaction: Interaction):
+    await interaction.response.send_message("GTVメンバー紹介noteだ！\nhttps://note.com/koresute_0523/n/n1b3bf9754432")
+
 # --- 管理者用コマンド ---
 profile_admin = app_commands.Group(name="profile_admin", description="管理者用のプロフィール操作コマンド")
 
