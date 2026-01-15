@@ -29,8 +29,9 @@ BASE_URL = "https://dmps-tournament.takaratomy.co.jp/schedulehost.asp"
 MEMBERS_DATA_FILE = "members_data.json"
 JST = timezone(timedelta(hours=+9), 'JST')
 NOTIFY_TIME = dt_time(18, 0, 0, tzinfo=JST)
-BIRTHDAY_NOTIFY_TIME = dt_time(9, 0, 0, tzinfo=JST) # 午前9時に誕生日を通知
-
+BIRTHDAY_NOTIFY_TIME = dt_time(0, 0, 0, tzinfo=JST) # 午前9時に誕生日を通知
+BIRTHDAY_CHANNEL_ID = int(os.getenv('BIRTHDAY_CHANNEL_ID')) if os.getenv('BIRTHDAY_CHANNEL_ID')
+     else 0
 # --- Botのセットアップ ---
 intents = discord.Intents.default()
 intents.members = True
@@ -301,9 +302,9 @@ async def check_tournaments_today():
 @tasks.loop(time=BIRTHDAY_NOTIFY_TIME)
 async def check_birthdays_today():
     await bot.wait_until_ready()
-    channel = bot.get_channel(CHANNEL_ID)
+    channel = bot.get_channel(BIRTHDAY_CHANNEL_ID)
     if not channel:
-        print(f"Error: Birthday notification channel ID {CHANNEL_ID} not found.")
+        print(f"Error: Birthday notification channel ID {BIRTHDAY_CHANNEL_ID} not found.")
         return
 
     today_str = datetime.now(JST).strftime('%m-%d')
