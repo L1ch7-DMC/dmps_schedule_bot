@@ -140,10 +140,11 @@ def fetch_and_parse_tournaments():
         print(f"[LOG] Error fetching tournament list: {e}")
         return []
 
-# --- プロフィール登録用UI ---
+# --- プロフィール登録用UI (汎用化) ---
 class AchievementModal(ui.Modal, title='実績情報の登録'):
-    def __init__(self, user_data: Optional[psycopg2.extras.DictCursor]):
+    def __init__(self, target_user: discord.Member, user_data: Optional[psycopg2.extras.DictCursor]):
         super().__init__()
+        self.target_user = target_user
         user_data = user_data or {}
 
         self.top100 = ui.TextInput(label=PROFILE_ITEMS["top100"], style=TextStyle.short, required=False, placeholder="例: 1", default=str(user_data.get("top100", "")))
@@ -157,17 +158,14 @@ class AchievementModal(ui.Modal, title='実績情報の登録'):
         self.add_item(self.achievements)
 
     async def on_submit(self, interaction: Interaction):
-        user_id = interaction.user.id
+        user_id = self.target_user.id
         updates = {}
         
         for item_key, text_input in [("top100", self.top100), ("nd_rate", self.nd_rate), ("ad_rate", self.ad_rate)]:
             if text_input.value:
-                try:
-                    updates[item_key] = int(text_input.value)
-                except ValueError:
-                    await interaction.response.send_message(f"「{PROFILE_ITEMS[item_key]}」には数値を入力してください。", ephemeral=True); return
-            else:
-                updates[item_key] = None
+                try: updates[item_key] = int(text_input.value)
+                except ValueError: await interaction.response.send_message(f"「{PROFILE_ITEMS[item_key]}」には数値を入力してください。", ephemeral=True); return
+            else: updates[item_key] = None
 
         updates["achievements"] = self.achievements.value if self.achievements.value else None
 
@@ -185,14 +183,16 @@ class AchievementModal(ui.Modal, title='実績情報の登録'):
                 """, (user_id, updates.get("top100"), updates.get("nd_rate"), updates.get("ad_rate"), updates.get("achievements")))
             conn.commit()
             conn.close()
-            await interaction.response.send_message('実績情報を更新したぞ！', ephemeral=True)
+            message = f'{self.target_user.display_name}の実績情報を更新したぞ！'
+            await interaction.response.send_message(message, ephemeral=True)
         except Exception as e:
             print(f"DB Error on AchievementModal submit: {e}")
             await interaction.response.send_message('エラーで更新できなかったぞ！', ephemeral=True)
 
 class PersonalInfoModal(ui.Modal, title='個人情報の登録'):
-    def __init__(self, user_data: Optional[psycopg2.extras.DictCursor]):
+    def __init__(self, target_user: discord.Member, user_data: Optional[psycopg2.extras.DictCursor]):
         super().__init__()
+        self.target_user = target_user
         user_data = user_data or {}
 
         self.player_id = ui.TextInput(label=PROFILE_ITEMS["player_id"], style=TextStyle.short, required=False, placeholder="例: 123456789", default=str(user_data.get("player_id", "")))
@@ -204,7 +204,7 @@ class PersonalInfoModal(ui.Modal, title='個人情報の登録'):
         self.add_item(self.birthday)
 
     async def on_submit(self, interaction: Interaction):
-        user_id = interaction.user.id
+        user_id = self.target_user.id
         updates = {}
 
         if self.player_id.value:
@@ -236,33 +236,34 @@ class PersonalInfoModal(ui.Modal, title='個人情報の登録'):
                 """, (user_id, updates.get("player_id"), updates.get("age"), updates.get("birthday")))
             conn.commit()
             conn.close()
-            await interaction.response.send_message('個人情報を更新したぞ！', ephemeral=True)
+            message = f'{self.target_user.display_name}の個人情報を更新したぞ！'
+            await interaction.response.send_message(message, ephemeral=True)
         except Exception as e:
             print(f"DB Error on PersonalInfoModal submit: {e}")
             await interaction.response.send_message('エラーで更新できなかったぞ！', ephemeral=True)
 
 class RegisterView(ui.View):
-    def __init__(self, user_id: int):
+    def __init__(self, target_user: discord.Member):
         super().__init__(timeout=180)
-        self.user_id = user_id
+        self.target_user = target_user
 
     async def get_user_data(self):
-        return get_user_profile(self.user_id)
+        return get_user_profile(self.target_user.id)
 
     @ui.button(label="実績を登録", style=discord.ButtonStyle.primary)
     async def register_achievements(self, interaction: Interaction, button: ui.Button):
         user_data = await self.get_user_data()
-        await interaction.response.send_modal(AchievementModal(user_data=user_data))
+        await interaction.response.send_modal(AchievementModal(target_user=self.target_user, user_data=user_data))
 
     @ui.button(label="個人情報を登録", style=discord.ButtonStyle.secondary)
     async def register_personal_info(self, interaction: Interaction, button: ui.Button):
         user_data = await self.get_user_data()
-        await interaction.response.send_modal(PersonalInfoModal(user_data=user_data))
+        await interaction.response.send_modal(PersonalInfoModal(target_user=self.target_user, user_data=user_data))
 
 # --- スラッシュコマンド ---
 @bot.tree.command(name="register", description="あなたのプロフィール情報を登録・更新します。")
 async def register_slash(interaction: Interaction):
-    await interaction.response.send_message("登録したい情報の種類を選んでください。", view=RegisterView(user_id=interaction.user.id), ephemeral=True)
+    await interaction.response.send_message("登録したい情報の種類を選んでください。", view=RegisterView(target_user=interaction.user), ephemeral=True)
 
 @bot.tree.command(name="profile", description="メンバーの情報を表示します。")
 @app_commands.describe(user="情報を表示したいメンバー (指定がなければ自分)")
@@ -312,7 +313,14 @@ async def roll_dice_slash(interaction: Interaction, dice: str):
 
 # --- 管理者用コマンド ---
 profile_admin = app_commands.Group(name="profile_admin", description="管理者用のプロフィール操作コマンド")
-@profile_admin.command(name="set", description="指定したユーザーの情報を変更します。")
+
+@profile_admin.command(name="edit", description="指定したユーザーの情報を対話形式で編集します。")
+@app_commands.describe(user="情報を編集するユーザー")
+@app_commands.checks.has_any_role(*ADMIN_ROLES)
+async def profile_admin_edit(interaction: Interaction, user: discord.Member):
+    await interaction.response.send_message(f"{user.display_name}の情報を編集します。", view=RegisterView(target_user=user), ephemeral=True)
+
+@profile_admin.command(name="set", description="[旧] 指定したユーザーの情報を項目ごとに変更します。")
 @app_commands.describe(user="情報を変更するユーザー", item="変更する項目", value="新しい値")
 @app_commands.choices(item=[app_commands.Choice(name=label, value=key) for key, label in PROFILE_ITEMS.items()])
 @app_commands.checks.has_any_role(*ADMIN_ROLES)
@@ -334,7 +342,6 @@ async def profile_admin_set(interaction: Interaction, user: discord.Member, item
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
-            # 動的にSQLを組み立てるが、カラム名は固定値なので安全
             sql = f"INSERT INTO users (user_id, {item_key}) VALUES (%s, %s) ON CONFLICT (user_id) DO UPDATE SET {item_key} = %s;"
             cur.execute(sql, (user_id, processed_value, processed_value))
         conn.commit()
@@ -424,22 +431,19 @@ async def check_birthdays_today():
     try:
         conn = get_db_connection()
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            # 今日の誕生日のユーザーを取得
             cur.execute("SELECT user_id, age FROM users WHERE birthday = %s", (today_str,))
             birthday_users = cur.fetchall()
 
             if birthday_users:
-                # 年齢をインクリメント
                 user_ids_to_update = [user['user_id'] for user in birthday_users if user['age'] is not None]
                 if user_ids_to_update:
                     cur.execute("UPDATE users SET age = age + 1 WHERE user_id = ANY(%s)", (user_ids_to_update,))
                     print(f"[LOG] Incremented age for users: {user_ids_to_update}")
 
-                # 誕生日通知メッセージを送信
                 mentions = [f"<@{user['user_id']}>" for user in birthday_users]
                 message = (f"@everyone\n🎉🎂ハッピーバースデー！🎂🎉\n"
                            f"今日は {', '.join(mentions)} さんのお誕生日だ！みんなでお祝いするぞ！🥳")
-                await channel.send(message)
+                await channel.send("".join(message))
         conn.commit()
         conn.close()
     except Exception as e:
