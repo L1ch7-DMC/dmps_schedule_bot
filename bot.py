@@ -36,6 +36,9 @@ intents = discord.Intents.default()
 intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# チャンネルごとの最後のスロットメッセージを記録する辞書
+last_slot_messages = {}
+
 # --- Flask (Keep Alive) ---
 app = Flask(__name__)
 @app.route('/')
@@ -507,7 +510,19 @@ async def note_slash(interaction: Interaction):
 @app_commands.rename(bet='ベット額')
 async def slot_slash(interaction: Interaction, bet: app_commands.Range[int, 1]):
     user_id = interaction.user.id
-    
+    channel_id = interaction.channel_id
+
+    # 前回のスロットメッセージがあれば削除
+    if channel_id in last_slot_messages:
+        try:
+            old_message_id = last_slot_messages.pop(channel_id)
+            old_message = await interaction.channel.fetch_message(old_message_id)
+            await old_message.delete()
+        except discord.NotFound:
+            print(f"Info: Old slot message {old_message_id} not found. Already deleted.")
+        except discord.HTTPException as e:
+            print(f"Warning: Failed to delete old slot message: {e}")
+
     conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
@@ -536,6 +551,10 @@ async def slot_slash(interaction: Interaction, bet: app_commands.Range[int, 1]):
         embed.set_footer(text=f"{interaction.user.display_name} が挑戦")
 
         await interaction.response.send_message(embed=embed, view=view)
+        
+        # 新しいメッセージを記録
+        new_message = await interaction.original_response()
+        last_slot_messages[channel_id] = new_message.id
 
         # メッセージ送信後に回転を開始
         await view.start_spinning()
@@ -550,10 +569,16 @@ async def slot_slash(interaction: Interaction, bet: app_commands.Range[int, 1]):
                 cur_revert.execute("UPDATE users SET credits = credits + %s WHERE user_id = %s;", (bet, user_id))
             conn_revert.commit()
             conn_revert.close()
-            await interaction.response.send_message("エラーが発生したため、ベット額を返却したぞ。", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message("エラーが発生したため、ベット額を返却したぞ。", ephemeral=True)
+            else:
+                await interaction.followup.send("エラーが発生したため、ベット額を返却したぞ。", ephemeral=True)
         except Exception as revert_e:
             print(f"Error reverting bet: {revert_e}")
-            await interaction.response.send_message("重大なエラーが発生したそうだ。管理者に連絡してくれ。", ephemeral=True)
+            if not interaction.response.is_done():
+                await interaction.response.send_message("重大なエラーが発生したそうだ。管理者に連絡してくれ。", ephemeral=True)
+            else:
+                await interaction.followup.send("重大なエラーが発生したそうだ。管理者に連絡してくれ。", ephemeral=True)
     finally:
         if conn and not conn.closed:
             conn.close()
