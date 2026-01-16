@@ -15,6 +15,7 @@ from flask import Flask
 import random
 import psycopg2
 import psycopg2.extras
+import asyncio
 
 # --- 設定 ---
 load_dotenv()
@@ -64,9 +65,14 @@ def setup_database():
                 player_id BIGINT,
                 achievements TEXT,
                 age INT,
-                birthday VARCHAR(5)
+                birthday VARCHAR(5),
+                credits INT DEFAULT 0,
+                last_daily TIMESTAMP WITH TIME ZONE
             )
         ''')
+        # For existing tables, add columns if they don't exist
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS credits INT DEFAULT 0;")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily TIMESTAMP WITH TIME ZONE;")
     conn.commit()
     conn.close()
 
@@ -260,7 +266,186 @@ class RegisterView(ui.View):
         user_data = await self.get_user_data()
         await interaction.response.send_modal(PersonalInfoModal(target_user=self.target_user, user_data=user_data))
 
+# --- スロットUI ---
+class SlotView(ui.View):
+    def __init__(self, user_id: int, bet: int, original_interaction: Interaction):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.bet = bet
+        self.original_interaction = original_interaction
+        self.reels = ['🍒', '🍊', '🍇', '🔔', '７', '🍉']
+        self.result = ['🎰', '🎰', '🎰']
+        self.stopped_reels = [False, False, False]
+        self.payout = 0
+        self.spinning_tasks = []
+        self.message_lock = asyncio.Lock()
+
+    async def start_spinning(self):
+        for i in range(3):
+            task = asyncio.create_task(self.spin_reel(i))
+            self.spinning_tasks.append(task)
+
+    async def spin_reel(self, reel_index: int):
+        while not self.stopped_reels[reel_index]:
+            self.result[reel_index] = random.choice(self.reels)
+            async with self.message_lock:
+                try:
+                    message = await self.original_interaction.original_response()
+                    embed = message.embeds[0]
+                    embed.description = f"**> `{' | '.join(self.result)}` <**"
+                    await self.original_interaction.edit_original_response(embed=embed)
+                except (discord.NotFound, discord.HTTPException) as e:
+                    print(f"Error spinning reel (message edit failed): {e}")
+                    self.stop_all_spins()
+                    break
+            await asyncio.sleep(0.8)
+
+    def stop_all_spins(self):
+        for i in range(len(self.stopped_reels)):
+            self.stopped_reels[i] = True
+        for task in self.spinning_tasks:
+            if not task.done():
+                task.cancel()
+
+    async def interaction_check(self, interaction: Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("他の人のスロットを止めることはできません。", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        self.stop_all_spins()
+        for child in self.children:
+            child.disabled = True
+        
+        try:
+            message = await self.original_interaction.original_response()
+            embed = message.embeds[0]
+            if not any(field.name == "タイムアウト" for field in embed.fields):
+                embed.add_field(name="タイムアウト", value="時間切れです。ベット額は返却されません。", inline=False)
+                embed.color = discord.Color.dark_grey()
+                await self.original_interaction.edit_original_response(embed=embed, view=None)
+        except (discord.NotFound, discord.HTTPException) as e:
+            print(f"Error on slot timeout: {e}")
+
+    async def handle_stop(self, interaction: Interaction, button: ui.Button, reel_index: int):
+        if not self.stopped_reels[reel_index]:
+            self.stopped_reels[reel_index] = True
+            if self.spinning_tasks[reel_index] and not self.spinning_tasks[reel_index].done():
+                self.spinning_tasks[reel_index].cancel()
+
+            self.result[reel_index] = random.choice(self.reels)
+            button.disabled = True
+            
+            async with self.message_lock:
+                embed = interaction.message.embeds[0]
+                embed.description = f"**> `{' | '.join(self.result)}` <**"
+                await interaction.response.edit_message(embed=embed, view=self)
+
+            if all(self.stopped_reels):
+                await self.process_result(interaction)
+
+    @ui.button(label="ストップ 1", style=discord.ButtonStyle.primary, custom_id="stop_1")
+    async def stop_1(self, interaction: Interaction, button: ui.Button):
+        await self.handle_stop(interaction, button, 0)
+
+    @ui.button(label="ストップ 2", style=discord.ButtonStyle.primary, custom_id="stop_2")
+    async def stop_2(self, interaction: Interaction, button: ui.Button):
+        await self.handle_stop(interaction, button, 1)
+
+    @ui.button(label="ストップ 3", style=discord.ButtonStyle.primary, custom_id="stop_3")
+    async def stop_3(self, interaction: Interaction, button: ui.Button):
+        await self.handle_stop(interaction, button, 2)
+
+    async def process_result(self, interaction: Interaction):
+        result_text = ""
+        payout_rate = 0
+        if len(set(self.result)) == 1:
+            if self.result[0] == '７':
+                payout_rate = 20
+                result_text = "👑 **JACKPOT！** 👑\nすごい！７が揃ったぞ！"
+            else:
+                payout_rate = 10
+                result_text = "🎉 **大当たり！** 🎉\nすごい！3つ揃ったぞ！"
+        elif len(set(self.result)) == 2:
+            payout_rate = 3
+            result_text = "🎊 **当たり！** 🎊\n惜しい！あと1つ！"
+        else:
+            result_text = "残念！また挑戦してくれ！"
+
+        self.payout = self.bet * payout_rate
+
+        conn = get_db_connection()
+        try:
+            with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+                cur.execute("UPDATE users SET credits = credits + %s WHERE user_id = %s RETURNING credits;", (self.payout, self.user_id))
+                final_credits = cur.fetchone()['credits']
+            conn.commit()
+
+            embed = interaction.message.embeds[0]
+            embed.clear_fields()
+            embed.add_field(name="結果", value=result_text, inline=False)
+            embed.add_field(name="ベット額", value=f"`{self.bet}` GTV", inline=True)
+            embed.add_field(name="配当", value=f"`{self.payout}` GTV", inline=True)
+            embed.add_field(name="所持クレジット", value=f"`{final_credits}` GTV", inline=False)
+            if self.payout > 0:
+                embed.color = discord.Color.red()
+            
+            await interaction.edit_original_response(embed=embed, view=None)
+        except Exception as e:
+            print(f"DB Error on slot result processing: {e}")
+            if not interaction.response.is_done():
+                await interaction.response.send_message("結果の処理中にエラーが発生しました。", ephemeral=True)
+            else:
+                await interaction.followup.send("結果の処理中にエラーが発生しました。", ephemeral=True)
+        finally:
+            if conn:
+                conn.close()
+
 # --- スラッシュコマンド ---
+@bot.tree.command(name="daily", description="1日1回、500 GTVクレジットを獲得します。")
+async def daily_slash(interaction: Interaction):
+    user_id = interaction.user.id
+    now = datetime.now(JST)
+    
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            # ユーザー情報を取得（なければ作成）
+            cur.execute("""
+                INSERT INTO users (user_id) VALUES (%s) ON CONFLICT (user_id) DO NOTHING;
+            """, (user_id,))
+            cur.execute("SELECT credits, last_daily FROM users WHERE user_id = %s;", (user_id,))
+            user_data = cur.fetchone()
+
+            last_daily = user_data['last_daily']
+            
+            # last_daily が None (初回) または24時間以上経過しているかチェック
+            if last_daily is None or (now - last_daily) >= timedelta(days=1):
+                # クレジットを更新し、last_daily を記録
+                new_credits = (user_data['credits'] or 0) + 500
+                cur.execute("""
+                    UPDATE users SET credits = %s, last_daily = %s WHERE user_id = %s;
+                """, (new_credits, now, user_id))
+                
+                await interaction.response.send_message(f"🎉 デイリーボーナス！ 500 GTVクレジットを獲得しました。\n現在の所持クレジット: `{new_credits}` GTV")
+            else:
+                # 次のボーナスまでの時間を計算
+                next_bonus_time = last_daily + timedelta(days=1)
+                time_remaining = next_bonus_time - now
+                hours, remainder = divmod(time_remaining.seconds, 3600)
+                minutes, _ = divmod(remainder, 60)
+                
+                await interaction.response.send_message(f"次のデイリーボーナスまで、あと {hours}時間{minutes}分 です。", ephemeral=True)
+        
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"DB Error on /daily command: {e}")
+        await interaction.response.send_message("エラーが発生しました。もう一度お試しください。", ephemeral=True)
+    finally:
+        conn.close()
+
 @bot.tree.command(name="register", description="あなたのプロフィール情報を登録・更新します。")
 async def register_slash(interaction: Interaction):
     await interaction.response.send_message("登録したい情報の種類を選んでください。", view=RegisterView(target_user=interaction.user), ephemeral=True)
@@ -315,6 +500,155 @@ async def roll_dice_slash(interaction: Interaction, dice: str):
 async def note_slash(interaction: Interaction):
     await interaction.response.send_message("GTVメンバー紹介noteだ！\nhttps://note.com/koresute_0523/n/n1b3bf9754432")
 
+@bot.tree.command(name="slot", description="スロットを回します。")
+@app_commands.describe(bet="ベットするGTVクレジットの額 (1以上)")
+@app_commands.rename(bet='ベット額')
+async def slot_slash(interaction: Interaction, bet: app_commands.Range[int, 1]):
+    user_id = interaction.user.id
+    
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            # ユーザーのクレジット情報を取得 (なければ作成)
+            cur.execute("INSERT INTO users (user_id, credits) VALUES (%s, 0) ON CONFLICT (user_id) DO NOTHING;", (user_id,))
+            cur.execute("SELECT credits FROM users WHERE user_id = %s;", (user_id,))
+            user_data = cur.fetchone()
+            current_credits = user_data['credits'] if user_data and user_data['credits'] is not None else 0
+
+            if current_credits < bet:
+                await interaction.response.send_message(f"GTVクレジットが足りません！\nあなたの所持クレジット: `{current_credits}` GTV", ephemeral=True)
+                return
+
+            # ベット額を先に引く
+            new_credits = current_credits - bet
+            cur.execute("UPDATE users SET credits = %s WHERE user_id = %s;", (new_credits, user_id))
+        conn.commit()
+
+        # --- スロットUIの準備 ---
+        view = SlotView(user_id=user_id, bet=bet, original_interaction=interaction)
+        
+        embed = Embed(title="🎰 スロットゲーム 🎰", color=discord.Color.gold())
+        embed.description = f"**> `{' | '.join(view.result)}` <**"
+        embed.add_field(name="ベット額", value=f"`{bet}` GTV")
+        embed.add_field(name="現在の所持クレジット", value=f"`{new_credits}` GTV")
+        embed.set_footer(text=f"{interaction.user.display_name} が挑戦")
+
+        await interaction.response.send_message(embed=embed, view=view)
+
+        # メッセージ送信後に回転を開始
+        await view.start_spinning()
+
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"DB Error or other error on /slot command: {e}")
+        # エラー発生時にベットを返却する
+        try:
+            conn_revert = get_db_connection()
+            with conn_revert.cursor() as cur_revert:
+                cur_revert.execute("UPDATE users SET credits = credits + %s WHERE user_id = %s;", (bet, user_id))
+            conn_revert.commit()
+            conn_revert.close()
+            await interaction.response.send_message("エラーが発生したため、ベット額を返却しました。", ephemeral=True)
+        except Exception as revert_e:
+            print(f"Error reverting bet: {revert_e}")
+            await interaction.response.send_message("重大なエラーが発生しました。管理者に連絡してください。", ephemeral=True)
+    finally:
+        if conn and not conn.closed:
+            conn.close()
+
+@bot.tree.command(name="leaderboard", description="GTVクレジットの所持数ランキングを表示します。")
+async def leaderboard_slash(interaction: Interaction):
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            # クレジットが多い順に上位10名を取得
+            cur.execute("SELECT user_id, credits FROM users WHERE credits > 0 ORDER BY credits DESC LIMIT 10;")
+            leaderboard_data = cur.fetchall()
+
+        if not leaderboard_data:
+            await interaction.response.send_message("まだ誰もGTVクレジットを持っていません。", ephemeral=True)
+            return
+
+        embed = Embed(title="🏆 GTVクレジット ランキング 🏆", color=discord.Color.gold())
+        
+        description = []
+        rank_emojis = {1: '🥇', 2: '🥈', 3: '🥉'}
+        
+        for i, record in enumerate(leaderboard_data, 1):
+            user_id = record['user_id']
+            credits = record['credits']
+            
+            # サーバーからメンバー情報を取得
+            member = interaction.guild.get_member(user_id)
+            member_display_name = member.display_name if member else f"不明なユーザー"
+            
+            rank_emoji = rank_emojis.get(i, f'`{i}.`')
+            description.append(f"{rank_emoji} **{member_display_name}** - `{credits}` GTV")
+
+        embed.description = "\n".join(description)
+        await interaction.response.send_message(embed=embed)
+
+    except Exception as e:
+        print(f"Error on /leaderboard command: {e}")
+        await interaction.response.send_message("エラーが発生しました。もう一度お試しください。", ephemeral=True)
+    finally:
+        if conn:
+            conn.close()
+
+@bot.tree.command(name="gift", description="他のユーザーにGTVクレジットを渡します。")
+@app_commands.describe(
+    user="クレジットを渡す相手",
+    amount="渡すクレジットの額 (1以上)"
+)
+@app_commands.rename(user='相手', amount='額')
+async def gift_slash(interaction: Interaction, user: discord.Member, amount: app_commands.Range[int, 1]):
+    sender_id = interaction.user.id
+    receiver_id = user.id
+
+    if sender_id == receiver_id:
+        await interaction.response.send_message("自分自身にクレジットを渡すことはできません。", ephemeral=True)
+        return
+    
+    if user.bot:
+        await interaction.response.send_message("ボットにクレジットを渡すことはできません。", ephemeral=True)
+        return
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            # 送信者のクレジット残高を確認 (FOR UPDATEでロックをかけるとより安全)
+            cur.execute("SELECT credits FROM users WHERE user_id = %s FOR UPDATE;", (sender_id,))
+            sender_data = cur.fetchone()
+            sender_credits = sender_data['credits'] if sender_data and sender_data['credits'] is not None else 0
+
+            if sender_credits < amount:
+                await interaction.response.send_message(f"GTVクレジットが足りません！\nあなたの所持クレジット: `{sender_credits}` GTV", ephemeral=True)
+                conn.rollback() # ロックを解放するためにロールバック
+                return
+
+            # 送信者のクレジットを減らす
+            cur.execute("UPDATE users SET credits = credits - %s WHERE user_id = %s;", (amount, sender_id))
+            
+            # 受信者のユーザーレコードが存在しない可能性があるので、INSERT ON CONFLICT を使う
+            cur.execute("""
+                INSERT INTO users (user_id, credits) VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET credits = users.credits + %s;
+            """, (receiver_id, amount, amount))
+
+        # トランザクションを確定
+        conn.commit()
+
+        await interaction.response.send_message(f"✅ {interaction.user.display_name}が{user.display_name}さんに `{amount}` GTVクレジットを渡しました。")
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"DB Error on /gift command: {e}")
+        await interaction.response.send_message("エラーが発生しました。処理はキャンセルされました。", ephemeral=True)
+    finally:
+        if conn:
+            conn.close()
+
 # --- 管理者用コマンド ---
 profile_admin = app_commands.Group(name="profile_admin", description="管理者用のプロフィール操作コマンド")
 
@@ -322,7 +656,7 @@ profile_admin = app_commands.Group(name="profile_admin", description="管理者�
 @app_commands.describe(user="情報を編集するユーザー")
 @app_commands.checks.has_any_role(*ADMIN_ROLES)
 async def profile_admin_edit(interaction: Interaction, user: discord.Member):
-    await interaction.response.send_message(f"{user.display_name}の情報を編集します。", view=RegisterView(target_user=user), ephemeral=True)
+    await interaction.response.send_message(f"{user.display_name}の情報を編集するぞ！", view=RegisterView(target_user=user), ephemeral=True)
 
 @profile_admin.command(name="set", description="[旧] 指定したユーザーの情報を項目ごとに変更します。")
 @app_commands.describe(user="情報を変更するユーザー", item="変更する項目", value="新しい値")
@@ -370,6 +704,78 @@ async def profile_admin_delete(interaction: Interaction, user: discord.Member):
         print(f"DB Error on admin delete: {e}")
         await interaction.response.send_message("DBエラーにより削除できませんでした。", ephemeral=True)
 bot.tree.add_command(profile_admin)
+
+# --- 管理者用クレジット操作コマンドグループ ---
+admin_credit = app_commands.Group(name="admin_credit", description="管理者用のクレジット操作コマンド", guild_only=True)
+
+@admin_credit.command(name="set", description="ユーザーのGTVクレジットを指定した額に設定します。")
+@app_commands.describe(user="対象ユーザー", amount="設定する額 (0以上)")
+@app_commands.rename(user='ユーザー', amount='額')
+@app_commands.checks.has_any_role(*ADMIN_ROLES)
+async def admin_credit_set(interaction: Interaction, user: discord.Member, amount: app_commands.Range[int, 0]):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO users (user_id, credits) VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET credits = %s;
+            """, (user.id, amount, amount))
+        conn.commit()
+        await interaction.response.send_message(f"{user.display_name} さんのクレジットを `{amount}` GTVに設定しました。", ephemeral=True)
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"DB Error on /admin_credit set: {e}")
+        await interaction.response.send_message("エラーが発生しました。", ephemeral=True)
+    finally:
+        if conn: conn.close()
+
+@admin_credit.command(name="add", description="ユーザーのGTVクレジットを指定した額だけ増やします。")
+@app_commands.describe(user="対象ユーザー", amount="増やす額 (1以上)")
+@app_commands.rename(user='ユーザー', amount='額')
+@app_commands.checks.has_any_role(*ADMIN_ROLES)
+async def admin_credit_add(interaction: Interaction, user: discord.Member, amount: app_commands.Range[int, 1]):
+    conn = get_db_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO users (user_id, credits) VALUES (%s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET credits = users.credits + %s;
+            """, (user.id, amount, amount))
+        conn.commit()
+        await interaction.response.send_message(f"{user.display_name} さんのクレジットに `{amount}` GTVを追加しました。", ephemeral=True)
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"DB Error on /admin_credit add: {e}")
+        await interaction.response.send_message("エラーが発生しました。", ephemeral=True)
+    finally:
+        if conn: conn.close()
+
+@admin_credit.command(name="remove", description="ユーザーのGTVクレジットを指定した額だけ減らします。")
+@app_commands.describe(user="対象ユーザー", amount="減らす額 (1以上)")
+@app_commands.rename(user='ユーザー', amount='額')
+@app_commands.checks.has_any_role(*ADMIN_ROLES)
+async def admin_credit_remove(interaction: Interaction, user: discord.Member, amount: app_commands.Range[int, 1]):
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            cur.execute("SELECT credits FROM users WHERE user_id = %s;", (user.id,))
+            user_data = cur.fetchone()
+            current_credits = user_data['credits'] if user_data and user_data['credits'] is not None else 0
+            if current_credits < amount:
+                await interaction.response.send_message(f"残高不足です。{user.display_name}さんの所持クレジットは `{current_credits}` GTVです。", ephemeral=True)
+                return
+
+            cur.execute("UPDATE users SET credits = credits - %s WHERE user_id = %s;", (amount, user.id))
+        conn.commit()
+        await interaction.response.send_message(f"{user.display_name} さんのクレジットから `{amount}` GTVを削除しました。", ephemeral=True)
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"DB Error on /admin_credit remove: {e}")
+        await interaction.response.send_message("エラーが発生しました。", ephemeral=True)
+    finally:
+        if conn: conn.close()
+
+bot.tree.add_command(admin_credit)
 
 # --- イベントハンドラ ---
 @bot.event
