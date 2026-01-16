@@ -298,7 +298,7 @@ class SlotView(ui.View):
                     print(f"Error spinning reel (message edit failed): {e}")
                     self.stop_all_spins()
                     break
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(1.5)
 
     def stop_all_spins(self):
         for i in range(len(self.stopped_reels)):
