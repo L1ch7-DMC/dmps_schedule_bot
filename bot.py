@@ -309,7 +309,7 @@ class SlotView(ui.View):
 
     async def interaction_check(self, interaction: Interaction) -> bool:
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("他の人のスロットを止めることはできません。", ephemeral=True)
+            await interaction.response.send_message("他の人のスロットを止めることはできないぞ！。", ephemeral=True)
             return False
         return True
 
@@ -363,13 +363,13 @@ class SlotView(ui.View):
         if len(set(self.result)) == 1:
             if self.result[0] == '７':
                 payout_rate = 20
-                result_text = "👑 **JACKPOT！** 👑\nすごい！７が揃ったぞ！"
+                result_text = "👑 **JACKPOT！** 👑\nおひょぴょー！７が揃ったぞ！"
             else:
                 payout_rate = 10
                 result_text = "🎉 **大当たり！** 🎉\nすごい！3つ揃ったぞ！"
         elif len(set(self.result)) == 2:
             payout_rate = 3
-            result_text = "🎊 **当たり！** 🎊\n惜しい！あと1つ！"
+            result_text = "🎊 **当たり！** 🎊\n惜しい！あと1つだ！"
         else:
             result_text = "残念！また挑戦してくれ！"
 
@@ -428,7 +428,7 @@ async def daily_slash(interaction: Interaction):
                     UPDATE users SET credits = %s, last_daily = %s WHERE user_id = %s;
                 """, (new_credits, now, user_id))
                 
-                await interaction.response.send_message(f"🎉 デイリーボーナス！ 500 GTVクレジットを獲得しました。\n現在の所持クレジット: `{new_credits}` GTV")
+                await interaction.response.send_message(f"🎉 デイリーボーナス！ 500 GTVクレジットを獲得したぞ！\n現在の所持クレジット: `{new_credits}` GTV")
             else:
                 # 次のボーナスまでの時間を計算
                 next_bonus_time = last_daily + timedelta(days=1)
@@ -457,7 +457,7 @@ async def profile_slash(interaction: Interaction, user: Optional[discord.Member]
     user_data = get_user_profile(target_user.id)
     
     if not user_data or not any(user_data[key] for key in PROFILE_ITEMS):
-        message = f"{target_user.display_name}の情報はまだ登録されていません。" + ("\n`/register`で登録してみよう！" if target_user == interaction.user else "")
+        message = f"{target_user.display_name}の情報はまだ登録されていないぞ。" + ("\n`/register`で登録してみよう！" if target_user == interaction.user else "")
         await interaction.response.send_message(message, ephemeral=True); return
 
     embed = Embed(title=f"{target_user.display_name}のプロフィール", color=target_user.color).set_thumbnail(url=target_user.display_avatar.url)
@@ -516,7 +516,7 @@ async def slot_slash(interaction: Interaction, bet: app_commands.Range[int, 1]):
             current_credits = user_data['credits'] if user_data and user_data['credits'] is not None else 0
 
             if current_credits < bet:
-                await interaction.response.send_message(f"GTVクレジットが足りません！\nあなたの所持クレジット: `{current_credits}` GTV", ephemeral=True)
+                await interaction.response.send_message(f"GTVクレジットが足りないぞ！\nあなたの所持クレジット: `{current_credits}` GTV", ephemeral=True)
                 return
 
             # ベット額を先に引く
@@ -548,15 +548,15 @@ async def slot_slash(interaction: Interaction, bet: app_commands.Range[int, 1]):
                 cur_revert.execute("UPDATE users SET credits = credits + %s WHERE user_id = %s;", (bet, user_id))
             conn_revert.commit()
             conn_revert.close()
-            await interaction.response.send_message("エラーが発生したため、ベット額を返却しました。", ephemeral=True)
+            await interaction.response.send_message("エラーが発生したため、ベット額を返却したぞ。", ephemeral=True)
         except Exception as revert_e:
             print(f"Error reverting bet: {revert_e}")
-            await interaction.response.send_message("重大なエラーが発生しました。管理者に連絡してください。", ephemeral=True)
+            await interaction.response.send_message("重大なエラーが発生したそうだ。管理者に連絡してくれ。", ephemeral=True)
     finally:
         if conn and not conn.closed:
             conn.close()
 
-@bot.tree.command(name="leaderboard", description="GTVクレジットの所持数ランキングを表示します。")
+@bot.tree.command(name="leaderboard", description="GTVクレジットの所持数ランキングを表示するぞ！")
 async def leaderboard_slash(interaction: Interaction):
     conn = get_db_connection()
     try:
@@ -566,7 +566,7 @@ async def leaderboard_slash(interaction: Interaction):
             leaderboard_data = cur.fetchall()
 
         if not leaderboard_data:
-            await interaction.response.send_message("まだ誰もGTVクレジットを持っていません。", ephemeral=True)
+            await interaction.response.send_message("まだ誰もGTVクレジットを持っていないみたいだな。", ephemeral=True)
             return
 
         embed = Embed(title="🏆 GTVクレジット ランキング 🏆", color=discord.Color.gold())
@@ -606,11 +606,11 @@ async def gift_slash(interaction: Interaction, user: discord.Member, amount: app
     receiver_id = user.id
 
     if sender_id == receiver_id:
-        await interaction.response.send_message("自分自身にクレジットを渡すことはできません。", ephemeral=True)
+        await interaction.response.send_message("自分自身にクレジットを渡すことはできないぞ。", ephemeral=True)
         return
     
     if user.bot:
-        await interaction.response.send_message("ボットにクレジットを渡すことはできません。", ephemeral=True)
+        await interaction.response.send_message("ボットにクレジットを渡すことはできないぞ。", ephemeral=True)
         return
 
     conn = get_db_connection()
