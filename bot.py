@@ -390,7 +390,8 @@ class SlotView(ui.View):
             embed.add_field(name="所持クレジット", value=f"`{final_credits}` GTV", inline=False)
             if self.payout > 0:
                 embed.color = discord.Color.red()
-            
+                
+            self.stop()
             await interaction.edit_original_response(embed=embed, view=None)
         except Exception as e:
             print(f"DB Error on slot result processing: {e}")
