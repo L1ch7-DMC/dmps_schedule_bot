@@ -421,8 +421,8 @@ async def daily_slash(interaction: Interaction):
 
             last_daily = user_data['last_daily']
             
-            # last_daily が None (初回) または24時間以上経過しているかチェック
-            if last_daily is None or (now - last_daily) >= timedelta(days=1):
+            # last_dailyがNone（初回）か、最後にもらった日付が今日より前かをチェック
+            if last_daily is None or last_daily.date() < now.date():
                 # クレジットを更新し、last_daily を記録
                 new_credits = (user_data['credits'] or 0) + 500
                 cur.execute("""
@@ -431,13 +431,14 @@ async def daily_slash(interaction: Interaction):
                 
                 await interaction.response.send_message(f"🎉 デイリーボーナス！ 500 GTVクレジットを獲得したぞ！\n現在の所持クレジット: `{new_credits}` GTV")
             else:
-                # 次のボーナスまでの時間を計算
-                next_bonus_time = last_daily + timedelta(days=1)
+                # 次のボーナス（次の日の0時）までの時間を計算
+                tomorrow = now.date() + timedelta(days=1)
+                next_bonus_time = datetime.combine(tomorrow, dt_time(0, 0, tzinfo=JST))
                 time_remaining = next_bonus_time - now
                 hours, remainder = divmod(time_remaining.seconds, 3600)
                 minutes, _ = divmod(remainder, 60)
                 
-                await interaction.response.send_message(f"次のデイリーボーナスまで、あと {hours}時間{minutes}分 です。", ephemeral=True)
+                await interaction.response.send_message(f"次のデイリーボーナスは明日までお預けだ！\nあと {hours}時間{minutes}分 だぞ。", ephemeral=True)
         
         conn.commit()
     except Exception as e:
