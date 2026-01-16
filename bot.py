@@ -512,10 +512,10 @@ async def slot_slash(interaction: Interaction, bet: app_commands.Range[int, 1]):
     user_id = interaction.user.id
     channel_id = interaction.channel_id
 
-    # 前回のスロットメッセージがあれば削除
-    if channel_id in last_slot_messages:
+    # このユーザーがこのチャンネルで前回実行したスロットメッセージがあれば削除
+    if channel_id in last_slot_messages and user_id in last_slot_messages[channel_id]:
         try:
-            old_message_id = last_slot_messages.pop(channel_id)
+            old_message_id = last_slot_messages[channel_id].pop(user_id)
             old_message = await interaction.channel.fetch_message(old_message_id)
             await old_message.delete()
         except discord.NotFound:
@@ -554,7 +554,9 @@ async def slot_slash(interaction: Interaction, bet: app_commands.Range[int, 1]):
         
         # 新しいメッセージを記録
         new_message = await interaction.original_response()
-        last_slot_messages[channel_id] = new_message.id
+        if channel_id not in last_slot_messages:
+            last_slot_messages[channel_id] = {}
+        last_slot_messages[channel_id][user_id] = new_message.id
 
         # メッセージ送信後に回転を開始
         await view.start_spinning()
