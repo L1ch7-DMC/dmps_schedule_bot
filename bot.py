@@ -616,19 +616,18 @@ async def gacha_slash(interaction: Interaction, count: app_commands.Range[int, 1
             rarity_order = ["MAS", "LEG", "VIC", "SR", "VR", "R", "UC", "C"]
             results.sort(key=lambda x: rarity_order.index(x["rarity"]))
 
-            title = f"ガチャ結果 ({count}連)"
-            description_lines = []
+            message_lines = [f"ガチャ結果 ({count}連)", "--------------------"]
             for result in results:
-                description_lines.append(f"**【{result['rarity']}】** {result['message']}")
+                # Remove the rarity prefix from the message itself if it exists
+                prize_message = result['message']
+                if prize_message.startswith(f"【{result['rarity']}】"):
+                    prize_message = prize_message[len(f"【{result['rarity']}】"):].lstrip()
+                message_lines.append(f"**【{result['rarity']}】** {prize_message}")
             
-            embed = Embed(
-                title=title,
-                description="\n".join(description_lines),
-                color=discord.Color.gold()
-            )
-            embed.set_footer(text=f"{interaction.user.display_name} | 残り: {new_credits} GTV")
+            message_lines.append("--------------------")
+            message_lines.append(f"{interaction.user.display_name} | 残り: {new_credits} GTV")
             
-            await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message("\n".join(message_lines))
 
         conn.commit()
 
