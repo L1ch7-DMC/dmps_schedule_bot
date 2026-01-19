@@ -576,7 +576,7 @@ async def note_slash(interaction: Interaction):
 
 @bot.tree.command(name="gacha", description="1000GTVを消費してガチャを回します。")
 @app_commands.describe(count="回す回数を指定します (1-10)。デフォルトは1回です。")
-async def gacha_slash(interaction: Interaction, count: Annotated[int,app_commands.Range(min=1, max=10)] = 1):
+async def gacha_slash(interaction: Interaction, count: app_commands.Range[int, 1, 10] = 1):
     user_id = interaction.user.id
     cost_per_pull = 1000
     total_cost = cost_per_pull * count
