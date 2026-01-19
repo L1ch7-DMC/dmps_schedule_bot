@@ -46,7 +46,7 @@ GACHA_PRIZES = {
     "UC": ["【UC】:zetubou:","【UC】:aporo:","【UC】:daisippai:","【UC】今日はお菓子の袋詰めバイトだ！","【UC】:katikakumannsinn:","【UC】:dekkibirudohaiokuri:"
           ,"【UC】:kouiukotomodekirunnda:","【UC】:tateyaityauyoooon: "],
     "C":  ["【C】:siiiirudotorigaaaaahatudou:","【C】:ZEROhando:","【C】:gomi:","【C】今日はお弁当に緑のアレを入れるバイトだ。","【C】バイトするか！？","【C】:denkanohoutou:"
-          ,"【C】:katesounanodawa_:","【C】天上天下！！"]
+          ,"【C】:katesounanodawa_:","【C】天上天下！！","【C】:keroyonnkaruteddo:"]
 }
 GACHA_RATES = {
     "MAS": 0.5,
