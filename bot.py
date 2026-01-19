@@ -335,7 +335,7 @@ class SlotView(ui.View):
                 embed = message.embeds[0]
                 embed.description = f"**> `{' | '.join(temp_result)}` <**"
                 await self.original_interaction.edit_original_response(embed=embed)
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(0.75)
             except (asyncio.CancelledError, discord.NotFound):
                 break # タスクがキャンセルされたか、メッセージが削除されたらループを抜ける
             except Exception as e:
