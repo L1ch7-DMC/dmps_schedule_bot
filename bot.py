@@ -425,7 +425,7 @@ async def daily_slash(interaction: Interaction):
             last_daily = user_data['last_daily']
             
             # last_dailyがNone（初回）か、最後にもらった日付が今日より前かをチェック
-            if last_daily is None or last_daily.date() < now.date():
+            if last_daily is None or last_daily.astimezone(JST).date() < now.date():
                 # クレジットを更新し、last_daily を記録
                 new_credits = (user_data['credits'] or 0) + 500
                 cur.execute("""
