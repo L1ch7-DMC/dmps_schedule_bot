@@ -31,6 +31,28 @@ NOTIFY_TIME = dt_time(18, 0, 0, tzinfo=JST)
 BIRTHDAY_NOTIFY_TIME = dt_time(0, 0, 0, tzinfo=JST) # 午前0時に誕生日を通知
 BIRTHDAY_CHANNEL_ID = int(os.getenv('BIRTHDAY_CHANNEL_ID')) if os.getenv('BIRTHDAY_CHANNEL_ID') else 0
 
+# --- ガチャ設定 ---
+GACHA_PRIZES = {
+    "MAS": ["【MAS】マスターレアのメッセージです。"],
+    "LEG": ["【LEG】レジェンドレアのメッセージです。"],
+    "VIC": ["【VIC】ビクトリーレアのメッセージです。"],
+    "SR": ["【SR】スーパーレアのメッセージです。"],
+    "VR": ["【VR】ベリーレアのメッセージです。"],
+    "R":  ["【R】レアのメッセージです。"],
+    "UC": ["【UC】アンコモンのメッセージです。"],
+    "C":  ["【C】コモンのメッセージです。"]
+}
+GACHA_RATES = {
+    "MAS": 0.5,
+    "LEG": 0.5,
+    "VIC": 0.5,
+    "SR": 3.5,
+    "VR": 10,
+    "R": 20,
+    "UC": 25,
+    "C": 40
+}
+
 # --- Botのセットアップ ---
 intents = discord.Intents.default()
 intents.members = True
@@ -544,6 +566,74 @@ async def roll_dice_slash(interaction: Interaction, dice: str):
 @bot.tree.command(name="note", description="メンバー紹介noteのURLを送信します。")
 async def note_slash(interaction: Interaction):
     await interaction.response.send_message("GTVメンバー紹介noteだ！\nhttps://note.com/koresute_0523/n/n1b3bf9754432")
+
+
+@bot.tree.command(name="gacha", description="GTVを消費してガチャを回します。")
+@app_commands.describe(count="回す回数を指定します (1-10)。デフォルトは1回です。")
+@app_commands.Range(count, min=1, max=10)
+async def gacha_slash(interaction: Interaction, count: int = 1):
+    user_id = interaction.user.id
+    cost_per_pull = 100
+    total_cost = cost_per_pull * count
+
+    conn = get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            # クレジット残高を確認
+            cur.execute("SELECT credits FROM users WHERE user_id = %s;", (user_id,))
+            user_data = cur.fetchone()
+            current_credits = user_data['credits'] if user_data and user_data['credits'] is not None else 0
+
+            if current_credits < total_cost:
+                await interaction.response.send_message(f"GTVクレジットが足りないぞ！{count}回回すには {total_cost} GTV必要だ。\nあなたの所持クレジット: `{current_credits}` GTV", ephemeral=True)
+                return
+
+            # コストを引く
+            new_credits = current_credits - total_cost
+            cur.execute("UPDATE users SET credits = %s WHERE user_id = %s;", (new_credits, user_id))
+            
+            # --- ガチャの抽選ロジック ---
+            results = []
+            for _ in range(count):
+                rarities = list(GACHA_RATES.keys())
+                weights = list(GACHA_RATES.values())
+                chosen_rarity = random.choices(rarities, weights=weights, k=1)[0]
+                
+                prize_pool = GACHA_PRIZES.get(chosen_rarity, [])
+                if not prize_pool:
+                    chosen_message = f"エラー: {chosen_rarity}の景品がありません。"
+                else:
+                    chosen_message = random.choice(prize_pool)
+                
+                results.append({"rarity": chosen_rarity, "message": chosen_message})
+
+            # --- 結果表示 ---
+            rarity_order = ["MAS", "LEG", "VIC", "SR", "VR", "R", "UC", "C"]
+            results.sort(key=lambda x: rarity_order.index(x["rarity"]))
+
+            title = f"ガチャ結果 ({count}連)"
+            description_lines = []
+            for result in results:
+                description_lines.append(f"**【{result['rarity']}】** {result['message']}")
+            
+            embed = Embed(
+                title=title,
+                description="\n".join(description_lines),
+                color=discord.Color.gold()
+            )
+            embed.set_footer(text=f"{interaction.user.display_name} | 残り: {new_credits} GTV")
+            
+            await interaction.response.send_message(embed=embed)
+
+        conn.commit()
+
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"DB Error or other error on /gacha command: {e}")
+        await interaction.response.send_message("ガチャの処理中にエラーが発生しました。クレジットは消費されていません。", ephemeral=True)
+    finally:
+        if conn: conn.close()
+
 
 @bot.tree.command(name="slot", description="スロットを回します。")
 @app_commands.describe(bet="ベットするGTVクレジットの額 (1以上)")
