@@ -76,6 +76,7 @@ def setup_database():
         # For existing tables, add columns if they don't exist
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS credits INT DEFAULT 0;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily TIMESTAMP WITH TIME ZONE;")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_taxed_credits INT DEFAULT 0;")
     conn.commit()
     conn.close()
 
@@ -272,52 +273,118 @@ class RegisterView(ui.View):
 # --- スロットUI ---
 class SlotView(ui.View):
     def __init__(self, user_id: int, bet: int, original_interaction: Interaction):
-        super().__init__(timeout=60)
+        super().__init__(timeout=120) # タイムアウトを少し長めに設定
         self.user_id = user_id
         self.bet = bet
         self.original_interaction = original_interaction
         self.reels = ['🍒', '🍊', '🍇', '🔔', '７', '🍉']
         self.result = ['🎰', '🎰', '🎰']
-        self.stopped_reels = [False, False, False]
-        self.payout = 0
-        self.spinning_tasks = []
-        self.message_lock = asyncio.Lock()
+        self.spinning_task = None
+        self.active_reel = -1
 
-    async def start_spinning(self):
-        for i in range(3):
-            task = asyncio.create_task(self.spin_reel(i))
-            self.spinning_tasks.append(task)
+        # ボタンを定義
+        self.stop_button_1 = ui.Button(label="ストップ 1", style=discord.ButtonStyle.primary, custom_id="stop_1", disabled=True)
+        self.stop_button_2 = ui.Button(label="ストップ 2", style=discord.ButtonStyle.primary, custom_id="stop_2", disabled=True)
+        self.stop_button_3 = ui.Button(label="ストップ 3", style=discord.ButtonStyle.primary, custom_id="stop_3", disabled=True)
 
-    async def spin_reel(self, reel_index: int):
-        while not self.stopped_reels[reel_index]:
-            self.result[reel_index] = random.choice(self.reels)
-            async with self.message_lock:
-                try:
-                    message = await self.original_interaction.original_response()
-                    embed = message.embeds[0]
-                    embed.description = f"**> `{' | '.join(self.result)}` <**"
-                    await self.original_interaction.edit_original_response(embed=embed)
-                except (discord.NotFound, discord.HTTPException) as e:
-                    print(f"Error spinning reel (message edit failed): {e}")
-                    self.stop_all_spins()
-                    break
-            await asyncio.sleep(1.5)
+        self.stop_button_1.callback = self.stop_1_callback
+        self.stop_button_2.callback = self.stop_2_callback
+        self.stop_button_3.callback = self.stop_3_callback
 
-    def stop_all_spins(self):
-        for i in range(len(self.stopped_reels)):
-            self.stopped_reels[i] = True
-        for task in self.spinning_tasks:
-            if not task.done():
-                task.cancel()
+        self.add_item(self.stop_button_1)
+        self.add_item(self.stop_button_2)
+        self.add_item(self.stop_button_3)
+
+    async def start_game(self):
+        """ゲームを開始し、最初のリールの回転を始める"""
+        await self.start_next_reel()
+
+    async def start_next_reel(self):
+        """次のリールの回転を開始する"""
+        if self.spinning_task and not self.spinning_task.done():
+            self.spinning_task.cancel()
+
+        self.active_reel += 1
+        if self.active_reel > 2:
+            return
+
+        # 対応するボタンを有効化
+        buttons = [self.stop_button_1, self.stop_button_2, self.stop_button_3]
+        for i, button in enumerate(buttons):
+            button.disabled = (i != self.active_reel)
+
+        # メッセージを更新して、回転開始を通知
+        try:
+            message = await self.original_interaction.original_response()
+            embed = message.embeds[0]
+            embed.description = f"**> `{' | '.join(self.result)}` <**"
+            await self.original_interaction.edit_original_response(embed=embed, view=self)
+        except discord.NotFound:
+            return # メッセージが見つからなければ終了
+
+        # 新しいリールの回転アニメーションを開始
+        self.spinning_task = asyncio.create_task(self.spin_animation(self.active_reel))
+
+    async def spin_animation(self, reel_index: int):
+        """指定されたリールの回転アニメーション（メッセージ更新ループ）"""
+        temp_result = list(self.result)
+        while True:
+            try:
+                temp_result[reel_index] = random.choice(self.reels)
+                message = await self.original_interaction.original_response()
+                embed = message.embeds[0]
+                embed.description = f"**> `{' | '.join(temp_result)}` <**"
+                await self.original_interaction.edit_original_response(embed=embed)
+                await asyncio.sleep(1.5)
+            except (asyncio.CancelledError, discord.NotFound):
+                break # タスクがキャンセルされたか、メッセージが削除されたらループを抜ける
+            except Exception as e:
+                print(f"Error during spin animation: {e}")
+                break
+
+    async def handle_stop(self, interaction: Interaction, reel_index: int):
+        """ストップボタンが押された時の共通処理"""
+        if reel_index != self.active_reel:
+            await interaction.response.send_message("止めるリールが違うぞ！", ephemeral=True)
+            return
+
+        # 現在の回転タスクを停止
+        if self.spinning_task and not self.spinning_task.done():
+            self.spinning_task.cancel()
+
+        # リールの結果を確定
+        self.result[reel_index] = random.choice(self.reels)
+        
+        await interaction.response.defer() # ボタンへの応答
+
+        # 最後のリールかチェック
+        if self.active_reel == 2:
+            # 全てのボタンを無効化し、最終結果を処理
+            self.stop_button_1.disabled = True
+            self.stop_button_2.disabled = True
+            self.stop_button_3.disabled = True
+            await self.process_result()
+        else:
+            # 次のリールへ
+            await self.start_next_reel()
+
+    async def stop_1_callback(self, interaction: Interaction):
+        await self.handle_stop(interaction, 0)
+    async def stop_2_callback(self, interaction: Interaction):
+        await self.handle_stop(interaction, 1)
+    async def stop_3_callback(self, interaction: Interaction):
+        await self.handle_stop(interaction, 2)
 
     async def interaction_check(self, interaction: Interaction) -> bool:
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message("他の人のスロットを止めることはできないぞ！。", ephemeral=True)
+            await interaction.response.send_message("他の人のスロットを止めることはできないぞ！", ephemeral=True)
             return False
         return True
 
     async def on_timeout(self):
-        self.stop_all_spins()
+        if self.spinning_task and not self.spinning_task.done():
+            self.spinning_task.cancel()
+        
         for child in self.children:
             child.disabled = True
         
@@ -327,87 +394,54 @@ class SlotView(ui.View):
             if not any(field.name == "タイムアウト" for field in embed.fields):
                 embed.add_field(name="タイムアウト", value="時間切れです。ベット額は返却されません。", inline=False)
                 embed.color = discord.Color.dark_grey()
-                await self.original_interaction.edit_original_response(embed=embed, view=None)
+                await self.original_interaction.edit_original_response(embed=embed, view=self)
         except (discord.NotFound, discord.HTTPException) as e:
             print(f"Error on slot timeout: {e}")
 
-    async def handle_stop(self, interaction: Interaction, button: ui.Button, reel_index: int):
-        if not self.stopped_reels[reel_index]:
-            self.stopped_reels[reel_index] = True
-            if self.spinning_tasks[reel_index] and not self.spinning_tasks[reel_index].done():
-                self.spinning_tasks[reel_index].cancel()
-
-            self.result[reel_index] = random.choice(self.reels)
-            button.disabled = True
-            
-            async with self.message_lock:
-                embed = interaction.message.embeds[0]
-                embed.description = f"**> `{' | '.join(self.result)}` <**"
-                await interaction.response.edit_message(embed=embed, view=self)
-
-            if all(self.stopped_reels):
-                await self.process_result(interaction)
-
-    @ui.button(label="ストップ 1", style=discord.ButtonStyle.primary, custom_id="stop_1")
-    async def stop_1(self, interaction: Interaction, button: ui.Button):
-        await self.handle_stop(interaction, button, 0)
-
-    @ui.button(label="ストップ 2", style=discord.ButtonStyle.primary, custom_id="stop_2")
-    async def stop_2(self, interaction: Interaction, button: ui.Button):
-        await self.handle_stop(interaction, button, 1)
-
-    @ui.button(label="ストップ 3", style=discord.ButtonStyle.primary, custom_id="stop_3")
-    async def stop_3(self, interaction: Interaction, button: ui.Button):
-        await self.handle_stop(interaction, button, 2)
-
-    async def process_result(self, interaction: Interaction):
+    async def process_result(self):
+        """最終結果を計算し、メッセージを更新する"""
         result_text = ""
         payout_rate = 0
         if len(set(self.result)) == 1:
             if self.result[0] == '７':
-                payout_rate = 20
-                result_text = "👑 **JACKPOT！** 👑\nおひょぴょー！７が揃ったぞ！"
+                payout_rate = 20; result_text = "👑 **JACKPOT！** 👑\nおひょぴょー！７が揃ったぞ！"
             else:
-                payout_rate = 10
-                result_text = "🎉 **大当たり！** 🎉\nすごい！3つ揃ったぞ！"
+                payout_rate = 10; result_text = "🎉 **大当たり！** 🎉\nすごい！3つ揃ったぞ！"
         elif len(set(self.result)) == 2:
-            payout_rate = 3
-            result_text = "🎊 **当たり！** 🎊\n惜しい！あと1つだ！"
+            payout_rate = 3; result_text = "🎊 **当たり！** 🎊\n惜しい！あと1つだ！"
         else:
             result_text = "残念！また挑戦してくれ！"
 
-        self.payout = self.bet * payout_rate
+        payout = self.bet * payout_rate
 
         conn = get_db_connection()
         try:
             with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-                cur.execute("UPDATE users SET credits = credits + %s WHERE user_id = %s RETURNING credits;", (self.payout, self.user_id))
+                cur.execute("UPDATE users SET credits = credits + %s WHERE user_id = %s RETURNING credits;", (payout, self.user_id))
                 final_credits = cur.fetchone()['credits']
             conn.commit()
 
-            embed = interaction.message.embeds[0]
+            message = await self.original_interaction.original_response()
+            embed = message.embeds[0]
+            embed.description = f"**> `{' | '.join(self.result)}` <**"
             embed.clear_fields()
             embed.add_field(name="結果", value=result_text, inline=False)
             embed.add_field(name="ベット額", value=f"`{self.bet}` GTV", inline=True)
-            embed.add_field(name="配当", value=f"`{self.payout}` GTV", inline=True)
+            embed.add_field(name="配当", value=f"`{payout}` GTV", inline=True)
             embed.add_field(name="所持クレジット", value=f"`{final_credits}` GTV", inline=False)
-            if self.payout > 0:
+            if payout > 0:
                 embed.color = discord.Color.red()
                 
             self.stop()
-            await interaction.edit_original_response(embed=embed, view=None)
+            await self.original_interaction.edit_original_response(embed=embed, view=self)
         except Exception as e:
             print(f"DB Error on slot result processing: {e}")
-            if not interaction.response.is_done():
-                await interaction.response.send_message("結果の処理中にエラーが発生しました。", ephemeral=True)
-            else:
-                await interaction.followup.send("結果の処理中にエラーが発生しました。", ephemeral=True)
+            await self.original_interaction.followup.send("結果の処理中にエラーが発生しました。", ephemeral=True)
         finally:
-            if conn:
-                conn.close()
+            if conn: conn.close()
 
 # --- スラッシュコマンド ---
-@bot.tree.command(name="daily", description="1日1回、500 GTVクレジットを獲得します。")
+@bot.tree.command(name="daily", description="1日1回、150 GTVクレジットを獲得します。")
 async def daily_slash(interaction: Interaction):
     user_id = interaction.user.id
     now = datetime.now(JST)
@@ -427,13 +461,14 @@ async def daily_slash(interaction: Interaction):
             # last_dailyがNone（初回）か、最後にもらった日付が今日より前かをチェック
             if last_daily is None or last_daily.astimezone(JST).date() < now.date():
                 # クレジットを更新し、last_daily を記録
-                new_credits = (user_data['credits'] or 0) + 500
+                new_credits = (user_data['credits'] or 0) + 150
                 cur.execute("""
                     UPDATE users SET credits = %s, last_daily = %s WHERE user_id = %s;
                 """, (new_credits, now, user_id))
                 
-                await interaction.response.send_message(f"🎉 デイリーボーナス！ 500 GTVクレジットを獲得したぞ！\n現在の所持クレジット: `{new_credits}` GTV")
+                await interaction.response.send_message(f"🎉 デイリーボーナス！ 150 GTVクレジットを獲得したぞ！\n現在の所持クレジット: `{new_credits}` GTV")
             else:
+
                 # 次のボーナス（次の日の0時）までの時間を計算
                 tomorrow = now.date() + timedelta(days=1)
                 next_bonus_time = datetime.combine(tomorrow, dt_time(0, 0, tzinfo=JST))
@@ -512,21 +547,17 @@ async def slot_slash(interaction: Interaction, bet: app_commands.Range[int, 1]):
     user_id = interaction.user.id
     channel_id = interaction.channel_id
 
-    # このユーザーがこのチャンネルで前回実行したスロットメッセージがあれば削除
     if channel_id in last_slot_messages and user_id in last_slot_messages[channel_id]:
         try:
             old_message_id = last_slot_messages[channel_id].pop(user_id)
             old_message = await interaction.channel.fetch_message(old_message_id)
             await old_message.delete()
-        except discord.NotFound:
-            print(f"Info: Old slot message {old_message_id} not found. Already deleted.")
-        except discord.HTTPException as e:
-            print(f"Warning: Failed to delete old slot message: {e}")
+        except discord.NotFound: pass
+        except discord.HTTPException as e: print(f"Warning: Failed to delete old slot message: {e}")
 
     conn = get_db_connection()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            # ユーザーのクレジット情報を取得 (なければ作成)
             cur.execute("INSERT INTO users (user_id, credits) VALUES (%s, 0) ON CONFLICT (user_id) DO NOTHING;", (user_id,))
             cur.execute("SELECT credits FROM users WHERE user_id = %s;", (user_id,))
             user_data = cur.fetchone()
@@ -536,12 +567,10 @@ async def slot_slash(interaction: Interaction, bet: app_commands.Range[int, 1]):
                 await interaction.response.send_message(f"GTVクレジットが足りないぞ！\nあなたの所持クレジット: `{current_credits}` GTV", ephemeral=True)
                 return
 
-            # ベット額を先に引く
             new_credits = current_credits - bet
             cur.execute("UPDATE users SET credits = %s WHERE user_id = %s;", (new_credits, user_id))
         conn.commit()
 
-        # --- スロットUIの準備 ---
         view = SlotView(user_id=user_id, bet=bet, original_interaction=interaction)
         
         embed = Embed(title="🎰 スロットゲーム 🎰", color=discord.Color.gold())
@@ -552,19 +581,15 @@ async def slot_slash(interaction: Interaction, bet: app_commands.Range[int, 1]):
 
         await interaction.response.send_message(embed=embed, view=view)
         
-        # 新しいメッセージを記録
-        new_message = await interaction.original_response()
-        if channel_id not in last_slot_messages:
-            last_slot_messages[channel_id] = {}
-        last_slot_messages[channel_id][user_id] = new_message.id
+        message = await interaction.original_response()
+        if channel_id not in last_slot_messages: last_slot_messages[channel_id] = {}
+        last_slot_messages[channel_id][user_id] = message.id
 
-        # メッセージ送信後に回転を開始
-        await view.start_spinning()
+        await view.start_game()
 
     except Exception as e:
         if conn: conn.rollback()
         print(f"DB Error or other error on /slot command: {e}")
-        # エラー発生時にベットを返却する
         try:
             conn_revert = get_db_connection()
             with conn_revert.cursor() as cur_revert:
@@ -823,6 +848,7 @@ async def on_ready():
     
     if not check_tournaments_today.is_running(): check_tournaments_today.start()
     if not check_birthdays_today.is_running(): check_birthdays_today.start()
+    if not collect_income_tax.is_running(): collect_income_tax.start()
 
 @bot.tree.error
 async def on_app_command_error(interaction: Interaction, error: app_commands.AppCommandError):
@@ -856,6 +882,95 @@ async def check_tournaments_today():
         await send_today_tournaments(channel)
     else:
         print(f"Error: Channel ID {CHANNEL_ID} not found.")
+
+# 日本の所得税率を参考にしたGTV用累進課税テーブル (増加額に適用)
+# (課税所得上限, 税率, 控除額) - スケール10倍
+TAX_BRACKETS = [
+    (19500, 0.05, 0),
+    (33000, 0.10, 970),
+    (69500, 0.20, 4270),
+    (90000, 0.23, 6360),
+    (180000, 0.33, 15360),
+    (400000, 0.40, 27960),
+    (float('inf'), 0.45, 47960)
+]
+TAX_COLLECTION_TIME = dt_time(0, 0, 0, tzinfo=JST) # 午前0時0分
+
+@tasks.loop(time=TAX_COLLECTION_TIME)
+async def collect_income_tax():
+    # 毎週月曜日にのみ実行 (0=月曜日)
+    if datetime.now(JST).weekday() != 0:
+        return
+
+    await bot.wait_until_ready()
+    conn = None
+    total_tax_collected = 0
+    users_taxed_count = 0
+    try:
+        conn = get_db_connection()
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            # クレジットを持つ全ユーザーの情報を取得
+            cur.execute("SELECT user_id, credits, last_taxed_credits FROM users WHERE credits > 0")
+            all_users = cur.fetchall()
+
+            if not all_users:
+                print("[LOG] No users with credits to tax.")
+                return
+
+            for user in all_users:
+                current_credits = user['credits']
+                last_credits = user['last_taxed_credits'] if user['last_taxed_credits'] is not None else 0
+                
+                increase = current_credits - last_credits
+                if increase <= 0:
+                    # 資産が増えていない場合は、last_taxed_credits を現在の値に更新するだけ
+                    cur.execute("UPDATE users SET last_taxed_credits = %s WHERE user_id = %s", (current_credits, user['user_id']))
+                    continue
+
+                taxable_income = increase
+                tax_rate = 0
+                deduction = 0
+
+                # 増加額に応じた税率と控除額を決定
+                for bracket in TAX_BRACKETS:
+                    if taxable_income <= bracket[0]:
+                        tax_rate = bracket[1]
+                        deduction = bracket[2]
+                        break
+                
+                # 税額を計算
+                tax_amount = int((taxable_income * tax_rate) - deduction)
+
+                if tax_amount > 0:
+                    new_credits = current_credits - tax_amount
+                    # 税金を徴収し、課税後残高を last_taxed_credits として記録
+                    cur.execute("UPDATE users SET credits = %s, last_taxed_credits = %s WHERE user_id = %s", (new_credits, new_credits, user['user_id']))
+                    total_tax_collected += tax_amount
+                    users_taxed_count += 1
+                else:
+                    # 課税されなかった場合も、last_taxed_credits を現在の値に更新
+                    cur.execute("UPDATE users SET last_taxed_credits = %s WHERE user_id = %s", (current_credits, user['user_id']))
+
+        conn.commit()
+        
+        if users_taxed_count > 0:
+            log_message = f"本日の所得税として、合計 `{total_tax_collected}` GTV を {users_taxed_count} 名から徴収しました。"
+            print(f"[LOG] {log_message}")
+            # BIRTHDAY_CHANNEL_ID に通知
+            if BIRTHDAY_CHANNEL_ID:
+                channel = bot.get_channel(BIRTHDAY_CHANNEL_ID)
+                if channel:
+                    await channel.send(log_message)
+        else:
+            print("[LOG] No tax was collected today.")
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"DB Error in income tax task: {e}")
+    finally:
+        if conn:
+            conn.close()
 
 @tasks.loop(time=BIRTHDAY_NOTIFY_TIME)
 async def check_birthdays_today():
