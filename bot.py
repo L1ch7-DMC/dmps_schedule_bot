@@ -574,12 +574,12 @@ async def note_slash(interaction: Interaction):
     await interaction.response.send_message("GTVメンバー紹介noteだ！\nhttps://note.com/koresute_0523/n/n1b3bf9754432")
 
 
-@bot.tree.command(name="gacha", description="GTVを消費してガチャを回します。")
+@bot.tree.command(name="gacha", description="1000GTVを消費してガチャを回します。")
 @app_commands.describe(count="回す回数を指定します (1-10)。デフォルトは1回です。")
 @app_commands.Range(name="count", min=1, max=10)
 async def gacha_slash(interaction: Interaction, count: int = 1):
     user_id = interaction.user.id
-    cost_per_pull = 100
+    cost_per_pull = 1000
     total_cost = cost_per_pull * count
 
     conn = get_db_connection()
