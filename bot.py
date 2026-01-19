@@ -491,7 +491,7 @@ class SlotView(ui.View):
             if conn: conn.close()
 
 # --- スラッシュコマンド ---
-@bot.tree.command(name="daily", description="1日1回、150 GTVクレジットを獲得します。")
+@bot.tree.command(name="daily", description="1日1回、500 GTVクレジットを獲得します。")
 async def daily_slash(interaction: Interaction):
     user_id = interaction.user.id
     now = datetime.now(JST)
@@ -511,12 +511,12 @@ async def daily_slash(interaction: Interaction):
             # last_dailyがNone（初回）か、最後にもらった日付が今日より前かをチェック
             if last_daily is None or last_daily.astimezone(JST).date() < now.date():
                 # クレジットを更新し、last_daily を記録
-                new_credits = (user_data['credits'] or 0) + 150
+                new_credits = (user_data['credits'] or 0) + 500
                 cur.execute("""
                     UPDATE users SET credits = %s, last_daily = %s WHERE user_id = %s;
                 """, (new_credits, now, user_id))
                 
-                await interaction.response.send_message(f"🎉 デイリーボーナス！ 150 GTVクレジットを獲得したぞ！\n現在の所持クレジット: `{new_credits}` GTV")
+                await interaction.response.send_message(f"🎉 デイリーボーナス！ 500 GTVクレジットを獲得したぞ！\n現在の所持クレジット: `{new_credits}` GTV")
             else:
 
                 # 次のボーナス（次の日の0時）までの時間を計算
