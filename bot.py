@@ -42,7 +42,7 @@ GACHA_PRIZES = {
     "VR": ["【VR】:jinnjaofukaiteiki:","【VR】:ikudearimasu:","【VR】:tokotoko:","【VR】:hunndemokati:","【VR】:tadadehakorobannnoya:","【VR】秋山...ドボルザーク...？"
           ,"【VR】:nitorobakugeki:","【VR】金は考えて使え！"],
     "R":  ["【R】:imakosokisamawokorosu:","【R】:faaa_amaiamai: ","【R】レンタルデュエリストのダピコだ、今日はよろしく頼む。"
-           ,"【R】SR以上だと絵文字は排出されないようだぞ。"],
+           ,"【R】SR以上だと絵文字は排出されないようだぞ。","【R】ごはんを奢ってくれるのか！？"],
     "UC": ["【UC】:zetubou:","【UC】:aporo:","【UC】:daisippai:","【UC】今日はお菓子の袋詰めバイトだ！","【UC】:katikakumannsinn:","【UC】:dekkibirudohaiokuri:"
           ,"【UC】:kouiukotomodekirunnda:","【UC】:tateyaityauyoooon: "],
     "C":  ["【C】:siiiirudotorigaaaaahatudou:","【C】:ZEROhando:","【C】:gomi:","【C】今日はお弁当に緑のアレを入れるバイトだ。","【C】バイトするか！？","【C】:denkanohoutou:"
@@ -576,7 +576,7 @@ async def note_slash(interaction: Interaction):
 
 @bot.tree.command(name="gacha", description="GTVを消費してガチャを回します。")
 @app_commands.describe(count="回す回数を指定します (1-10)。デフォルトは1回です。")
-@app_commands.Range(count, min=1, max=10)
+@app_commands.Range(name="count", min=1, max=10)
 async def gacha_slash(interaction: Interaction, count: int = 1):
     user_id = interaction.user.id
     cost_per_pull = 100
