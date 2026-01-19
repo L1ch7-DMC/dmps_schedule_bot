@@ -78,6 +78,28 @@ def keep_alive_thread():
     t = threading.Thread(target=run_flask)
     t.start()
 
+
+# --- 絵文字フォーマット関数 ---
+def format_emojis(text: str, bot_instance: commands.Bot) -> str:
+    """
+    テキスト内の :emoji_name: 形式の文字列を、ボットが利用可能なカスタム絵文字に置換する。
+    """
+    # :word: というパターンの文字列をすべて見つける
+    potential_emoji_names = re.findall(r':(\w+):', text)
+    if not potential_emoji_names:
+        return text
+
+    # ボットがアクセスできる全絵文字の 名前->絵文字オブジェクト の辞書を作成
+    emoji_map = {emoji.name: str(emoji) for emoji in bot_instance.emojis}
+
+    # 見つかった絵文字名を置換していく
+    for name in potential_emoji_names:
+        if name in emoji_map:
+            text = text.replace(f':{name}:', emoji_map[name])
+    
+    return text
+
+
 # --- データベース管理 ---
 def get_db_connection():
     if not DATABASE_URL:
@@ -622,7 +644,11 @@ async def gacha_slash(interaction: Interaction, count: app_commands.Range[int, 1
                 prize_message = result['message']
                 if prize_message.startswith(f"【{result['rarity']}】"):
                     prize_message = prize_message[len(f"【{result['rarity']}】"):].lstrip()
-                message_lines.append(f"**【{result['rarity']}】** {prize_message}")
+                
+                # テキスト内のカスタム絵文字をフォーマット
+                formatted_message = format_emojis(prize_message, bot)
+                
+                message_lines.append(f"**【{result['rarity']}】** {formatted_message}")
             
             message_lines.append("--------------------")
             message_lines.append(f"{interaction.user.display_name} | 残り: {new_credits} GTV")
