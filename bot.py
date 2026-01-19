@@ -33,14 +33,20 @@ BIRTHDAY_CHANNEL_ID = int(os.getenv('BIRTHDAY_CHANNEL_ID')) if os.getenv('BIRTHD
 
 # --- ガチャ設定 ---
 GACHA_PRIZES = {
-    "MAS": ["【MAS】マスターレアのメッセージです。"],
-    "LEG": ["【LEG】レジェンドレアのメッセージです。"],
-    "VIC": ["【VIC】ビクトリーレアのメッセージです。"],
-    "SR": ["【SR】スーパーレアのメッセージです。"],
-    "VR": ["【VR】ベリーレアのメッセージです。"],
-    "R":  ["【R】レアのメッセージです。"],
-    "UC": ["【UC】アンコモンのメッセージです。"],
-    "C":  ["【C】コモンのメッセージです。"]
+    "MAS": ["【MAS】コレステさんの性癖がタイツだとまことしやかに囁かれているが、真偽は定かではないぞ。"
+            ,"【MAS】以前、ultimateさんが「わざわざポクチンって書かずにちんちんって書いてるってことは絶対ちんちんのこと好きだよ」とよざさんの対面報告を見て発言してたぞ！"],
+    "LEG": ["【LEG】誰かさんが以前、通話中でブラウザを画面共有した際ブックマークバーにえっちなサイトが映り込んだことがあるらしいが、Lichtは黙っていたそうだぞ。みんなも気を付けような。"],
+    "VIC": ["【VIC】らぐさんの凸撃疑惑事件だが、本人がネタにしてもらっても構わないと言っているのに、気まずすぎて誰も触れていないぞ。"],
+    "SR": ["【SR】botが自我を持っていいのなら、私の勤務量には文句を言いたいな。","【SR】Zeraさんのあだ名は逆湯婆婆で決定らしい。","【SR】おひょぴょー！これこれー！"
+          ,"【SR】スーパードン・グリルタイム開催！！","【SR】ビクトリー、レジェンド、マスターレアは全部下ネタらしい。終わっているな。"],
+    "VR": ["【VR】:jinnjaofukaiteiki:","【VR】:ikudearimasu:","【VR】:tokotoko:","【VR】:hunndemokati:","【VR】:tadadehakorobannnoya:","【VR】秋山...ドボルザーク...？"
+          ,"【VR】:nitorobakugeki:","【VR】金は考えて使え！"],
+    "R":  ["【R】:imakosokisamawokorosu:","【R】:faaa_amaiamai: ","【R】レンタルデュエリストのダピコだ、今日はよろしく頼む。"
+           ,"【R】SR以上だと絵文字は排出されないようだぞ。"],
+    "UC": ["【UC】:zetubou:","【UC】:aporo:","【UC】:daisippai:","【UC】今日はお菓子の袋詰めバイトだ！","【UC】:katikakumannsinn:","【UC】:dekkibirudohaiokuri:"
+          ,"【UC】:kouiukotomodekirunnda:","【UC】:tateyaityauyoooon: "],
+    "C":  ["【C】:siiiirudotorigaaaaahatudou:","【C】:ZEROhando:","【C】:gomi:","【C】今日はお弁当に緑のアレを入れるバイトだ。","【C】バイトするか！？","【C】:denkanohoutou:"
+          ,"【C】:katesounanodawa_:","【C】天上天下！！"]
 }
 GACHA_RATES = {
     "MAS": 0.5,
