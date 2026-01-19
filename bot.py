@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 import discord
 from discord.ext import tasks, commands
 from discord import Interaction, app_commands, ui, TextStyle, Embed
-from typing import Optional
+from typing import Optional, Annotated
 from dotenv import load_dotenv
 from datetime import datetime, date, time as dt_time, timedelta, timezone
 from urllib.parse import urljoin
@@ -576,8 +576,7 @@ async def note_slash(interaction: Interaction):
 
 @bot.tree.command(name="gacha", description="1000GTVを消費してガチャを回します。")
 @app_commands.describe(count="回す回数を指定します (1-10)。デフォルトは1回です。")
-@app_commands.Range(name="count", min=1, max=10)
-async def gacha_slash(interaction: Interaction, count: int = 1):
+async def gacha_slash(interaction: Interaction, count: Annotated[int,app_commands.Range(min=1, max=10)] = 1):
     user_id = interaction.user.id
     cost_per_pull = 1000
     total_cost = cost_per_pull * count
