@@ -504,6 +504,11 @@ async def profile_slash(interaction: Interaction, user: Optional[discord.Member]
     for key, label in PROFILE_ITEMS.items():
         if key in user_data and user_data[key] is not None:
             embed.add_field(name=label, value=user_data[key], inline=True)
+
+    # GTVクレジット情報を末尾に追加
+    credits = user_data.get('credits', 0)
+    embed.add_field(name="所持GTV", value=f"**`{credits}`** GTV", inline=False)
+    
     await interaction.response.send_message(embed=embed)
 
 @bot.tree.command(name="next", description="直近の大会情報を表示します。")
