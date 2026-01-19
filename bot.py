@@ -954,7 +954,7 @@ async def collect_income_tax():
         conn.commit()
         
         if users_taxed_count > 0:
-            log_message = f"本日の所得税として、合計 `{total_tax_collected}` GTV を {users_taxed_count} 名から徴収しました。"
+            log_message = f"今週の所得税として、合計 `{total_tax_collected}` GTV を {users_taxed_count} 名から徴収したぞ。"
             print(f"[LOG] {log_message}")
             # BIRTHDAY_CHANNEL_ID に通知
             if BIRTHDAY_CHANNEL_ID:
