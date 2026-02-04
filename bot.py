@@ -596,6 +596,85 @@ async def note_slash(interaction: Interaction):
     await interaction.response.send_message("GTVメンバー紹介noteだ！\nhttps://note.com/koresute_0523/n/n1b3bf9754432")
 
 
+@bot.tree.command(name="draw", description="山札からカードを引く確率を計算します。")
+@app_commands.describe(
+    deck_size="非公開領域の枚数 (山札の枚数)",
+    target_cards="当たりカードの枚数",
+    draw_count="引く枚数",
+    required_hits="当たりを引く要求枚数 (デフォルト: 1枚以上)"
+)
+async def draw_chance_slash(
+    interaction: Interaction,
+    deck_size: app_commands.Range[int, 1],
+    target_cards: app_commands.Range[int, 0],
+    draw_count: app_commands.Range[int, 1],
+    required_hits: app_commands.Range[int, 1] = 1
+):
+    # --- 入力値のバリデーション ---
+    if target_cards > deck_size:
+        await interaction.response.send_message("当たりカードの枚数が、非公開領域の枚数を超えています。", ephemeral=True)
+        return
+    if draw_count > deck_size:
+        await interaction.response.send_message("引く枚数が、非公開領域の枚数を超えています。", ephemeral=True)
+        return
+    if required_hits > target_cards:
+        await interaction.response.send_message("要求枚数が、当たりカードの枚数を超えています。", ephemeral=True)
+        return
+    if required_hits > draw_count:
+        await interaction.response.send_message("要求枚数が、引く枚数を超えています。", ephemeral=True)
+        return
+
+    # --- 確率計算 ---
+    try:
+        # 分母: C(N, n)
+        denominator = math.comb(deck_size, draw_count)
+        if denominator == 0:
+            raise ValueError("引く枚数が非公開領域の枚数を超えているため、組み合わせを計算できません。")
+
+        # required_hits 枚以上引く確率 P(X >= k) を計算
+        # P(X >= k) = 1 - P(X < k) = 1 - Σ [i=0 to k-1] P(X = i)
+        # ループ回数を減らすために、直接計算するか余事象を使うか判断
+        
+        # 直接計算: Σ [i=k to min(n, K)]
+        sum_range_direct = min(draw_count, target_cards) - required_hits + 1
+        # 余事象: Σ [i=0 to k-1]
+        sum_range_complement = required_hits
+
+        if sum_range_direct < sum_range_complement:
+            # 直接確率を計算 (k枚, k+1枚, ... を足し上げる)
+            total_probability = 0.0
+            loop_end = min(draw_count, target_cards)
+            for i in range(required_hits, loop_end + 1):
+                numerator = math.comb(target_cards, i) * math.comb(deck_size - target_cards, draw_count - i)
+                total_probability += numerator / denominator
+        else:
+            # 余事象の確率を計算 (0枚, 1枚, ..., k-1枚 を足し上げて1から引く)
+            complement_prob = 0.0
+            loop_end = min(required_hits - 1, draw_count, target_cards)
+            for i in range(loop_end + 1):
+                 numerator = math.comb(target_cards, i) * math.comb(deck_size - target_cards, draw_count - i)
+                 complement_prob += numerator / denominator
+            total_probability = 1.0 - complement_prob
+
+    except ValueError as e:
+        await interaction.response.send_message(f"計算エラー: {e}", ephemeral=True)
+        return
+    except Exception as e:
+        await interaction.response.send_message(f"予期せぬエラーが発生しました: {e}", ephemeral=True)
+        return
+
+    # --- 結果をEmbedで表示 ---
+    embed = Embed(title="🃏 確率計算結果", color=discord.Color.blue())
+    embed.description = f"**`{total_probability:.2%}`** の確率で引けます。"
+    
+    embed.add_field(name="非公開領域の枚数", value=f"`{deck_size}`枚", inline=True)
+    embed.add_field(name="当たりカードの枚数", value=f"`{target_cards}`枚", inline=True)
+    embed.add_field(name="引く枚数", value=f"`{draw_count}`枚", inline=True)
+    embed.add_field(name="要求枚数", value=f"`{required_hits}`枚以上", inline=True)
+    
+    await interaction.response.send_message(embed=embed)
+
+
 @bot.tree.command(name="gacha", description="1000GTVを消費してガチャを回します。")
 @app_commands.describe(count="回す回数を指定します (1-10)。デフォルトは1回です。")
 async def gacha_slash(interaction: Interaction, count: app_commands.Range[int, 1, 10] = 1):
