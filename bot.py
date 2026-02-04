@@ -16,6 +16,7 @@ import random
 import psycopg2
 import psycopg2.extras
 import asyncio
+import math
 
 # --- 設定 ---
 load_dotenv()
