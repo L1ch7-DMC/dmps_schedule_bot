@@ -16,7 +16,6 @@ import random
 import psycopg2
 import psycopg2.extras
 import asyncio
-import math
 
 # --- 設定 ---
 load_dotenv()
@@ -611,7 +610,7 @@ async def draw_chance_slash(
     draw_count: app_commands.Range[int, 1],
     required_hits: app_commands.Range[int, 1] = 1
 ):
-    # --- 入力値のバリデーション ---
+    # --- 1. 先にバリデーションを行う ---
     if target_cards > deck_size:
         await interaction.response.send_message("当たりカードの枚数が、非公開領域の枚数を超えています。", ephemeral=True)
         return
@@ -625,55 +624,84 @@ async def draw_chance_slash(
         await interaction.response.send_message("要求枚数が、引く枚数を超えています。", ephemeral=True)
         return
 
-    # --- 確率計算 ---
+    user_id = interaction.user.id
+    cost = 500
+    conn = None # finallyブロックで参照できるよう初期化
+
+    # --- 2. DB操作と計算をtryブロックで囲む ---
     try:
-        # 分母: C(N, n)
-        denominator = math.comb(deck_size, draw_count)
-        if denominator == 0:
-            raise ValueError("引く枚数が非公開領域の枚数を超えているため、組み合わせを計算できません。")
+        conn = get_db_connection()
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            # ユーザーのクレジット残高を確認
+            cur.execute("INSERT INTO users (user_id, credits) VALUES (%s, 0) ON CONFLICT (user_id) DO NOTHING;", (user_id,))
+            cur.execute("SELECT credits FROM users WHERE user_id = %s FOR UPDATE;", (user_id,)) # 行ロック
+            user_data = cur.fetchone()
+            current_credits = user_data['credits'] if user_data and user_data['credits'] is not None else 0
 
-        # required_hits 枚以上引く確率 P(X >= k) を計算
-        # P(X >= k) = 1 - P(X < k) = 1 - Σ [i=0 to k-1] P(X = i)
-        # ループ回数を減らすために、直接計算するか余事象を使うか判断
-        
-        # 直接計算: Σ [i=k to min(n, K)]
-        sum_range_direct = min(draw_count, target_cards) - required_hits + 1
-        # 余事象: Σ [i=0 to k-1]
-        sum_range_complement = required_hits
+            if current_credits < cost:
+                await interaction.response.send_message(f"GTVクレジットが足りないぞ！このコマンドには {cost} GTV必要だ。\nあなたの所持クレジット: `{current_credits}` GTV", ephemeral=True)
+                return
 
-        if sum_range_direct < sum_range_complement:
-            # 直接確率を計算 (k枚, k+1枚, ... を足し上げる)
-            total_probability = 0.0
-            loop_end = min(draw_count, target_cards)
-            for i in range(required_hits, loop_end + 1):
-                numerator = math.comb(target_cards, i) * math.comb(deck_size - target_cards, draw_count - i)
-                total_probability += numerator / denominator
-        else:
-            # 余事象の確率を計算 (0枚, 1枚, ..., k-1枚 を足し上げて1から引く)
-            complement_prob = 0.0
-            loop_end = min(required_hits - 1, draw_count, target_cards)
-            for i in range(loop_end + 1):
-                 numerator = math.comb(target_cards, i) * math.comb(deck_size - target_cards, draw_count - i)
-                 complement_prob += numerator / denominator
-            total_probability = 1.0 - complement_prob
+            # コストを引く
+            new_credits = current_credits - cost
+            cur.execute("UPDATE users SET credits = %s WHERE user_id = %s;", (new_credits, user_id))
 
-    except ValueError as e:
-        await interaction.response.send_message(f"計算エラー: {e}", ephemeral=True)
-        return
+            # --- 確率計算 ---
+            try:
+                # 分母: C(N, n)
+                denominator = math.comb(deck_size, draw_count)
+                if denominator == 0:
+                    raise ValueError("引く枚数が非公開領域の枚数を超えているため、組み合わせを計算できません。")
+
+                # required_hits 枚以上引く確率 P(X >= k) を計算
+                sum_range_direct = min(draw_count, target_cards) - required_hits + 1
+                sum_range_complement = required_hits
+
+                if sum_range_direct < sum_range_complement:
+                    total_probability = 0.0
+                    loop_end = min(draw_count, target_cards)
+                    for i in range(required_hits, loop_end + 1):
+                        numerator = math.comb(target_cards, i) * math.comb(deck_size - target_cards, draw_count - i)
+                        total_probability += numerator / denominator
+                else:
+                    complement_prob = 0.0
+                    loop_end = min(required_hits - 1, draw_count, target_cards)
+                    for i in range(loop_end + 1):
+                        numerator = math.comb(target_cards, i) * math.comb(deck_size - target_cards, draw_count - i)
+                        complement_prob += numerator / denominator
+                    total_probability = 1.0 - complement_prob
+            except ValueError as e:
+                # 計算エラーが発生した場合、ここでロールバックして早期リターン
+                conn.rollback()
+                await interaction.response.send_message(f"計算エラー: {e}", ephemeral=True)
+                return
+
+            # --- 結果をEmbedで表示 ---
+            embed = Embed(title="🃏 確率計算結果", color=discord.Color.blue())
+            embed.description = f"**`{total_probability:.2%}`** の確率で引けます。"
+            
+            embed.add_field(name="非公開領域の枚数", value=f"`{deck_size}`枚", inline=True)
+            embed.add_field(name="当たりカードの枚数", value=f"`{target_cards}`枚", inline=True)
+            embed.add_field(name="引く枚数", value=f"`{draw_count}`枚", inline=True)
+            embed.add_field(name="要求枚数", value=f"`{required_hits}`枚以上", inline=True)
+            
+            embed.set_footer(text=f"コスト: {cost} GTV | 残り: {new_credits} GTV")
+            
+            await interaction.response.send_message(embed=embed)
+            
+            # 全て成功したらコミット
+            conn.commit()
+
     except Exception as e:
-        await interaction.response.send_message(f"予期せぬエラーが発生しました: {e}", ephemeral=True)
-        return
+        if conn:
+            conn.rollback()
+        print(f"Error on /draw command: {e}")
+        if not interaction.response.is_done():
+             await interaction.response.send_message("コマンドの実行中にエラーが発生したため、GTVは消費されませんでした。", ephemeral=True)
 
-    # --- 結果をEmbedで表示 ---
-    embed = Embed(title="🃏 確率計算結果", color=discord.Color.blue())
-    embed.description = f"**`{total_probability:.2%}`** の確率で引けます。"
-    
-    embed.add_field(name="非公開領域の枚数", value=f"`{deck_size}`枚", inline=True)
-    embed.add_field(name="当たりカードの枚数", value=f"`{target_cards}`枚", inline=True)
-    embed.add_field(name="引く枚数", value=f"`{draw_count}`枚", inline=True)
-    embed.add_field(name="要求枚数", value=f"`{required_hits}`枚以上", inline=True)
-    
-    await interaction.response.send_message(embed=embed)
+    finally:
+        if conn:
+            conn.close()
 
 
 @bot.tree.command(name="gacha", description="1000GTVを消費してガチャを回します。")
