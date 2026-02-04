@@ -705,6 +705,78 @@ async def draw_chance_slash(
             conn.close()
 
 
+@bot.tree.command(name="combo", description="指定した2種類のカードを同時に引く確率を計算します。")
+@app_commands.describe(
+    deck_size="山札の枚数",
+    hand_size="引く枚数",
+    a_copies="カードAの採用枚数",
+    b_copies="カードBの採用枚数"
+)
+async def combo_chance_slash(
+    interaction: Interaction,
+    deck_size: app_commands.Range[int, 1],
+    hand_size: app_commands.Range[int, 1],
+    a_copies: app_commands.Range[int, 1],
+    b_copies: app_commands.Range[int, 1]
+):
+    # --- Validation ---
+    if a_copies + b_copies > deck_size:
+        await interaction.response.send_message("カードAとカードBの合計枚数が、山札の枚数を超えています。", ephemeral=True)
+        return
+    if hand_size > deck_size:
+        await interaction.response.send_message("引く枚数が、山札の枚数を超えています。", ephemeral=True)
+        return
+
+    # --- Probability Calculation ---
+    try:
+        N = deck_size
+        n = hand_size
+        kA = a_copies
+        kB = b_copies
+
+        # Total number of ways to draw n cards from N
+        total_combinations = math.comb(N, n)
+
+        # Ways to NOT get card A
+        no_A_combinations = math.comb(N - kA, n)
+
+        # Ways to NOT get card B
+        no_B_combinations = math.comb(N - kB, n)
+
+        # Ways to get NEITHER A nor B
+        # Ensure the number of cards to choose from is not negative
+        if N - kA - kB < n:
+            no_A_no_B_combinations = 0
+        else:
+            no_A_no_B_combinations = math.comb(N - kA - kB, n)
+
+        # Using Principle of Inclusion-Exclusion
+        # P(A and B) = 1 - (P(not A) + P(not B) - P(not A and not B))
+        # Numerator: C(N,n) - C(N-kA, n) - C(N-kB, n) + C(N-kA-kB, n)
+        favorable_combinations = total_combinations - no_A_combinations - no_B_combinations + no_A_no_B_combinations
+        
+        if total_combinations == 0:
+             # This case should be caught by validation, but as a safeguard
+            probability = 0.0
+        else:
+            probability = favorable_combinations / total_combinations
+
+    except ValueError as e:
+        await interaction.response.send_message(f"計算エラーが発生しました。入力値が無効です: {e}", ephemeral=True)
+        return
+
+    # --- Result Display ---
+    embed = Embed(title="🃏 コンボ確率計算結果", color=discord.Color.green())
+    embed.description = f"**`{probability:.2%}`** の確率で、引いたカードの中にカードAとカードBが両方とも1枚以上存在するぞ。"
+    
+    embed.add_field(name="山札の枚数", value=f"`{deck_size}`枚", inline=True)
+    embed.add_field(name="引く枚数", value=f"`{hand_size}`枚", inline=True)
+    embed.add_field(name="カードAの枚数", value=f"`{a_copies}`枚", inline=False)
+    embed.add_field(name="カードBの枚数", value=f"`{b_copies}`枚", inline=False)
+    
+    await interaction.response.send_message(embed=embed)
+
+
 @bot.tree.command(name="gacha", description="1000GTVを消費してガチャを回します。")
 @app_commands.describe(count="回す回数を指定します (1-10)。デフォルトは1回です。")
 async def gacha_slash(interaction: Interaction, count: app_commands.Range[int, 1, 10] = 1):
