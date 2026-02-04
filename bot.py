@@ -16,6 +16,7 @@ import random
 import psycopg2
 import psycopg2.extras
 import asyncio
+import math
 
 # --- 設定 ---
 load_dotenv()
@@ -612,16 +613,16 @@ async def draw_chance_slash(
 ):
     # --- 1. 先にバリデーションを行う ---
     if target_cards > deck_size:
-        await interaction.response.send_message("当たりカードの枚数が、非公開領域の枚数を超えています。", ephemeral=True)
+        await interaction.response.send_message("当たりカードの枚数が、非公開領域の枚数を超えているぞ。", ephemeral=True)
         return
     if draw_count > deck_size:
-        await interaction.response.send_message("引く枚数が、非公開領域の枚数を超えています。", ephemeral=True)
+        await interaction.response.send_message("引く枚数が、非公開領域の枚数を超えているぞ。", ephemeral=True)
         return
     if required_hits > target_cards:
-        await interaction.response.send_message("要求枚数が、当たりカードの枚数を超えています。", ephemeral=True)
+        await interaction.response.send_message("要求枚数が、当たりカードの枚数を超えているぞ。", ephemeral=True)
         return
     if required_hits > draw_count:
-        await interaction.response.send_message("要求枚数が、引く枚数を超えています。", ephemeral=True)
+        await interaction.response.send_message("要求枚数が、引く枚数を超えているぞ。", ephemeral=True)
         return
 
     user_id = interaction.user.id
@@ -651,7 +652,7 @@ async def draw_chance_slash(
                 # 分母: C(N, n)
                 denominator = math.comb(deck_size, draw_count)
                 if denominator == 0:
-                    raise ValueError("引く枚数が非公開領域の枚数を超えているため、組み合わせを計算できません。")
+                    raise ValueError("引く枚数が非公開領域の枚数を超えているため、組み合わせを計算できないぞ。")
 
                 # required_hits 枚以上引く確率 P(X >= k) を計算
                 sum_range_direct = min(draw_count, target_cards) - required_hits + 1
@@ -678,7 +679,7 @@ async def draw_chance_slash(
 
             # --- 結果をEmbedで表示 ---
             embed = Embed(title="🃏 確率計算結果", color=discord.Color.blue())
-            embed.description = f"**`{total_probability:.2%}`** の確率で引けます。"
+            embed.description = f"**`{total_probability:.2%}`** の確率で引けるぞ。"
             
             embed.add_field(name="非公開領域の枚数", value=f"`{deck_size}`枚", inline=True)
             embed.add_field(name="当たりカードの枚数", value=f"`{target_cards}`枚", inline=True)
