@@ -17,6 +17,7 @@ import psycopg2
 import psycopg2.extras
 import asyncio
 import math
+import itertools
 
 # --- 設定 ---
 load_dotenv()
@@ -705,74 +706,90 @@ async def draw_chance_slash(
             conn.close()
 
 
-@bot.tree.command(name="combo", description="指定した2種類のカードを同時に引く確率を計算します。")
+@bot.tree.command(name="combo", description="指定した複数種類のカードを同時に引く確率を計算します。")
 @app_commands.describe(
     deck_size="山札の枚数",
-    hand_size="引く枚数",
-    a_copies="カードAの採用枚数",
-    b_copies="カードBの採用枚数"
+    draw_count="引く枚数",
+    copies="各カードの採用枚数をカンマ区切りで入力 (例: 4,4,2)"
 )
+@app_commands.rename(draw_count='引く枚数')
 async def combo_chance_slash(
     interaction: Interaction,
     deck_size: app_commands.Range[int, 1],
-    hand_size: app_commands.Range[int, 1],
-    a_copies: app_commands.Range[int, 1],
-    b_copies: app_commands.Range[int, 1]
+    draw_count: app_commands.Range[int, 1],
+    copies: str
 ):
-    # --- Validation ---
-    if a_copies + b_copies > deck_size:
-        await interaction.response.send_message("カードAとカードBの合計枚数が、山札の枚数を超えています。", ephemeral=True)
+    # --- 1. Parse and validate input ---
+    try:
+        copies_list = [int(c.strip()) for c in copies.split(',')]
+        if not copies_list:
+            raise ValueError("枚数が入力されていません。")
+        if any(c <= 0 for c in copies_list):
+            raise ValueError("カードの枚数は1以上の整数である必要があります。")
+    except ValueError as e:
+        await interaction.response.send_message(f"カード枚数の入力形式が正しくないぞ。\n例: `4, 4, 2`\nエラー: {e}", ephemeral=True)
         return
-    if hand_size > deck_size:
+
+    # --- More Validation ---
+    if sum(copies_list) > deck_size:
+        await interaction.response.send_message("各カードの合計枚数が、山札の枚数を超えています。", ephemeral=True)
+        return
+    if draw_count > deck_size:
         await interaction.response.send_message("引く枚数が、山札の枚数を超えています。", ephemeral=True)
         return
 
-    # --- Probability Calculation ---
+    # --- 2. Probability Calculation (Inclusion-Exclusion) ---
     try:
         N = deck_size
-        n = hand_size
-        kA = a_copies
-        kB = b_copies
+        n = draw_count
+        k_list = copies_list
+        m = len(k_list)
 
-        # Total number of ways to draw n cards from N
         total_combinations = math.comb(N, n)
+        
+        # This is the numerator for P(not A or not B or ...)
+        union_of_misses_numerator = 0
+        
+        # Iterate through all non-empty subsets of card types
+        for i in range(1, m + 1):
+            # Generate all combinations of indices of size i
+            for subset_indices in itertools.combinations(range(m), i):
+                sum_of_copies_in_subset = sum(k_list[j] for j in subset_indices)
+                
+                if N - sum_of_copies_in_subset < n:
+                    term_numerator = 0
+                else:
+                    term_numerator = math.comb(N - sum_of_copies_in_subset, n)
 
-        # Ways to NOT get card A
-        no_A_combinations = math.comb(N - kA, n)
-
-        # Ways to NOT get card B
-        no_B_combinations = math.comb(N - kB, n)
-
-        # Ways to get NEITHER A nor B
-        # Ensure the number of cards to choose from is not negative
-        if N - kA - kB < n:
-            no_A_no_B_combinations = 0
-        else:
-            no_A_no_B_combinations = math.comb(N - kA - kB, n)
-
-        # Using Principle of Inclusion-Exclusion
-        # P(A and B) = 1 - (P(not A) + P(not B) - P(not A and not B))
-        # Numerator: C(N,n) - C(N-kA, n) - C(N-kB, n) + C(N-kA-kB, n)
-        favorable_combinations = total_combinations - no_A_combinations - no_B_combinations + no_A_no_B_combinations
+                # Add or subtract based on the size of the subset (inclusion-exclusion)
+                if (i % 2) == 1: # i is the size of the subset
+                    union_of_misses_numerator += term_numerator
+                else:
+                    union_of_misses_numerator -= term_numerator
+        
+        # Favorable = Total - (ways to miss at least one card type)
+        favorable_combinations = total_combinations - union_of_misses_numerator
         
         if total_combinations == 0:
-             # This case should be caught by validation, but as a safeguard
             probability = 0.0
         else:
             probability = favorable_combinations / total_combinations
 
-    except ValueError as e:
-        await interaction.response.send_message(f"計算エラーが発生しました。入力値が無効です: {e}", ephemeral=True)
+    except (ValueError, TypeError) as e:
+        await interaction.response.send_message(f"計算エラーが発生しました: {e}", ephemeral=True)
         return
 
-    # --- Result Display ---
+    # --- 3. Result Display ---
+    card_fields_text = []
+    for i, c in enumerate(copies_list):
+        card_fields_text.append(f"カード{chr(65+i)}: `{c}`枚")
+
     embed = Embed(title="🃏 コンボ確率計算結果", color=discord.Color.green())
-    embed.description = f"**`{probability:.2%}`** の確率で、引いたカードの中にカードAとカードBが両方とも1枚以上存在するぞ。"
+    embed.description = f"**`{probability:.2%}`** の確率で、指定した**{m}種類**のカードを全て1枚以上引けるぞ。"
     
     embed.add_field(name="山札の枚数", value=f"`{deck_size}`枚", inline=True)
-    embed.add_field(name="引く枚数", value=f"`{hand_size}`枚", inline=True)
-    embed.add_field(name="カードAの枚数", value=f"`{a_copies}`枚", inline=False)
-    embed.add_field(name="カードBの枚数", value=f"`{b_copies}`枚", inline=False)
+    embed.add_field(name="引く枚数", value=f"`{draw_count}`枚", inline=True)
+    embed.add_field(name="各カードの枚数", value="\n".join(card_fields_text), inline=False)
     
     await interaction.response.send_message(embed=embed)
 
