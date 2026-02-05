@@ -577,6 +577,43 @@ async def profile_slash(interaction: Interaction, user: Optional[discord.Member]
     
     await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name="load", description="DMPS大会成績を更新します。")
+async def load_dmps_stats_slash(interaction: Interaction):
+    user_id = interaction.user.id
+    user_data = get_user_profile(user_id)
+
+    if not user_data or not user_data.get('dmps_player_id'):
+        await interaction.response.send_message("DMPSプレイヤーIDが登録されていません。`/register`コマンドで個人情報を登録してください。", ephemeral=True)
+        return
+
+    dmps_player_id = user_data['dmps_player_id']
+    await interaction.response.defer(ephemeral=True) # スクレイピングに時間がかかる場合があるため
+
+    stats = await fetch_dmps_user_stats(dmps_player_id)
+
+    if stats:
+        new_rank = stats['rank']
+        new_points = stats['points']
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE users SET dmps_rank = %s, dmps_points = %s
+                    WHERE user_id = %s;
+                """, (new_rank, new_points, user_id))
+            conn.commit()
+            await interaction.followup.send(f"DMPS大会成績を更新したぞ！
+現在のランキング: `{new_rank}`位
+現在のポイント: `{new_points}`pt", ephemeral=True)
+        except Exception as e:
+            if conn: conn.rollback()
+            print(f"DB Error on /load command for user {user_id}: {e}")
+            await interaction.followup.send("成績の更新中にエラーが発生しました。", ephemeral=True)
+        finally:
+            if conn: conn.close()
+    else:
+        await interaction.followup.send("DMPS大会成績の取得に失敗しました。プレイヤーIDが正しいか、またはサイトにアクセスできるか確認してください。", ephemeral=True)
+
 @bot.tree.command(name="next", description="直近の大会情報を表示します。")
 async def next_tournament_slash(interaction: Interaction):
     await interaction.response.defer()
