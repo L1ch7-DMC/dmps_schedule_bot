@@ -1,16 +1,18 @@
 
 import os
-from dotenv import load_dotenv
 from datetime import time as dt_time, timezone, timedelta
 
 # --- 環境変数の読み込み ---
-load_dotenv()
-
 # --- Botの基本設定 ---
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 DATABASE_URL = os.getenv('DATABASE_URL')
-CHANNEL_ID = int(os.getenv('DISCORD_CHANNEL_ID')) if os.getenv('DISCORD_CHANNEL_ID') else 0
-BIRTHDAY_CHANNEL_ID = int(os.getenv('BIRTHDAY_CHANNEL_ID')) if os.getenv('BIRTHDAY_CHANNEL_ID') else 0
+def _get_int_env(name: str, default: int = 0) -> int:
+    try:
+        return int(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
+CHANNEL_ID = _get_int_env("DISCORD_CHANNEL_ID")
+BIRTHDAY_CHANNEL_ID = _get_int_env("BIRTHDAY_CHANNEL_ID")
 
 # --- 管理者ロール ---
 ADMIN_ROLE_NAMES_STR = os.getenv('ADMIN_ROLE_NAMES')
