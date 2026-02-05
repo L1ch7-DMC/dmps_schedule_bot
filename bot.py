@@ -602,9 +602,9 @@ async def load_dmps_stats_slash(interaction: Interaction):
                     WHERE user_id = %s;
                 """, (new_rank, new_points, user_id))
             conn.commit()
-            await interaction.followup.send(f"DMPS大会成績を更新したぞ！
+            await interaction.followup.send(f"""DMPS大会成績を更新したぞ！
 現在のランキング: `{new_rank}`位
-現在のポイント: `{new_points}`pt", ephemeral=True)
+現在のポイント: `{new_points}`pt""", ephemeral=True)
         except Exception as e:
             if conn: conn.rollback()
             print(f"DB Error on /load command for user {user_id}: {e}")
