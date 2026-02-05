@@ -129,6 +129,9 @@ def setup_database():
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS credits INT DEFAULT 0;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily TIMESTAMP WITH TIME ZONE;")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_taxed_credits INT DEFAULT 0;")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dmps_player_id TEXT;")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dmps_rank INT;")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS dmps_points INT;")
     conn.commit()
     conn.close()
 
@@ -143,7 +146,8 @@ def get_user_profile(user_id):
 # --- プロフィール項目定義 ---
 PROFILE_ITEMS = {
     "top100": "ランクマッチ最終TOP100", "nd_rate": "ND最高レート", "ad_rate": "AD最高レート",
-    "player_id": "デュエプレID", "achievements": "その他実績", "age": "年齢", "birthday": "誕生日"
+    "player_id": "デュエプレID", "achievements": "その他実績", "age": "年齢", "birthday": "誕生日",
+    "dmps_player_id": "DMPSプレイヤーID" # 新しい項目
 }
 NUMERIC_ITEMS = ["top100", "nd_rate", "ad_rate", "player_id", "age"]
 
@@ -260,10 +264,12 @@ class PersonalInfoModal(ui.Modal, title='個人情報の登録'):
         self.player_id = ui.TextInput(label=PROFILE_ITEMS["player_id"], style=TextStyle.short, required=False, placeholder="例: 123456789", default=str(user_data.get("player_id", "")))
         self.age = ui.TextInput(label=PROFILE_ITEMS["age"], style=TextStyle.short, required=False, placeholder="例: 20", default=str(user_data.get("age", "")))
         self.birthday = ui.TextInput(label=PROFILE_ITEMS["birthday"], style=TextStyle.short, required=False, placeholder="例: 01-15 (MM-DD形式)", default=user_data.get("birthday", ""))
+        self.dmps_player_id = ui.TextInput(label=PROFILE_ITEMS["dmps_player_id"], style=TextStyle.short, required=False, placeholder="例: 123456789", default=user_data.get("dmps_player_id", "")) # 新しい入力欄
 
         self.add_item(self.player_id)
         self.add_item(self.age)
         self.add_item(self.birthday)
+        self.add_item(self.dmps_player_id) # 新しい入力欄を追加
 
     async def on_submit(self, interaction: Interaction):
         user_id = self.target_user.id
@@ -285,17 +291,20 @@ class PersonalInfoModal(ui.Modal, title='個人情報の登録'):
             updates["birthday"] = self.birthday.value
         else: updates["birthday"] = None
         
+        updates["dmps_player_id"] = self.dmps_player_id.value if self.dmps_player_id.value else None # 新しい項目を更新
+        
         try:
             conn = get_db_connection()
             with conn.cursor() as cur:
                 cur.execute("""
-                    INSERT INTO users (user_id, player_id, age, birthday)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO users (user_id, player_id, age, birthday, dmps_player_id)
+                    VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (user_id) DO UPDATE SET
                         player_id = EXCLUDED.player_id,
                         age = EXCLUDED.age,
-                        birthday = EXCLUDED.birthday;
-                """, (user_id, updates.get("player_id"), updates.get("age"), updates.get("birthday")))
+                        birthday = EXCLUDED.birthday,
+                        dmps_player_id = EXCLUDED.dmps_player_id;
+                """, (user_id, updates.get("player_id"), updates.get("age"), updates.get("birthday"), updates.get("dmps_player_id")))
             conn.commit()
             conn.close()
             message = f'{self.target_user.display_name}の個人情報を更新したぞ！'
@@ -556,6 +565,11 @@ async def profile_slash(interaction: Interaction, user: Optional[discord.Member]
     for key, label in PROFILE_ITEMS.items():
         if key in user_data and user_data[key] is not None:
             embed.add_field(name=label, value=user_data[key], inline=True)
+
+    # DMPS成績情報を追加
+    if user_data.get('dmps_rank') is not None and user_data.get('dmps_points') is not None:
+        embed.add_field(name="DMPSランキング", value=f"`{user_data['dmps_rank']}`位", inline=True)
+        embed.add_field(name="DMPSポイント", value=f"`{user_data['dmps_points']}`pt", inline=True)
 
     # GTVクレジット情報を末尾に追加
     credits = user_data.get('credits', 0)
@@ -1132,6 +1146,7 @@ async def on_ready():
     if not check_tournaments_today.is_running(): check_tournaments_today.start()
     if not check_birthdays_today.is_running(): check_birthdays_today.start()
     if not collect_income_tax.is_running(): collect_income_tax.start()
+    if not update_dmps_points_task.is_running(): update_dmps_points_task.start() # 新しいタスクを開始
 
 @bot.tree.error
 async def on_app_command_error(interaction: Interaction, error: app_commands.AppCommandError):
@@ -1285,6 +1300,128 @@ async def check_birthdays_today():
         conn.close()
     except Exception as e:
         print(f"DB Error in birthday task: {e}")
+
+# Placeholder for the new scraping function
+DMPS_BASE_URL = "https://dmps-tournament.takaratomy.co.jp/userresult.asp"
+
+async def fetch_dmps_user_stats(dmps_player_id: str) -> Optional[Dict[str, int]]:
+    """
+    DMPS大会成績ページからランキングとポイントを取得する。
+    """
+    url = f"{DMPS_BASE_URL}?UserID={dmps_player_id}"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        response.encoding = 'shift_jis' # 文字化け対策
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # TOURNAMENT RANKINGの表示があるtd要素を探す
+        # ユーザーが提供したHTMLを元にセレクタを調整
+        # class="tx2022" align="left" のtd要素内にランキングとポイントがある
+        ranking_td = soup.find('td', class_='tx2022', align='left')
+
+        if not ranking_td:
+            print(f"[LOG] DMPS stats: Could not find ranking_td for UserID: {dmps_player_id}")
+            return None
+
+        # TOURNAMENT RANKINGのテキストがあるspanを探す
+        tournament_ranking_span = ranking_td.find('span', string='TOURNAMENT RANKING')
+        if not tournament_ranking_span:
+            print(f"[LOG] DMPS stats: Could not find 'TOURNAMENT RANKING' span for UserID: {dmps_player_id}")
+            return None
+
+        # ランキングとポイントは、TOURNAMENT RANKINGの後に続くfont-size:20pxのspanタグ内にある
+        # 最初のfont-size:20pxのspanがランキング、次のfont-size:20pxのspanがポイント
+        spans_20px = ranking_td.find_all('span', style='font-size:20px;')
+
+        if len(spans_20px) < 2:
+            print(f"[LOG] DMPS stats: Could not find enough 20px spans for rank/points for UserID: {dmps_player_id}")
+            return None
+
+        rank_str = spans_20px[0].get_text(strip=True)
+        points_str = spans_20px[1].get_text(strip=True)
+
+        # "位" や "pts" を除去して数値に変換
+        rank = int(re.sub(r'[^0-9]', '', rank_str))
+        points = int(re.sub(r'[^0-9]', '', points_str))
+
+        return {'rank': rank, 'points': points}
+
+    except requests.RequestException as e:
+        print(f"[LOG] Error fetching DMPS user stats for UserID {dmps_player_id}: {e}")
+        return None
+    except (ValueError, AttributeError) as e:
+        print(f"[LOG] Error parsing DMPS user stats for UserID {dmps_player_id}: {e}")
+        return None
+
+# New constant for DMPS update time
+DMPS_UPDATE_TIME = dt_time(12, 0, 0, tzinfo=JST) # 正午に実行
+
+@tasks.loop(time=DMPS_UPDATE_TIME)
+async def update_dmps_points_task():
+    await bot.wait_until_ready()
+    conn = None
+    granted_notifications = []
+    
+    try:
+        conn = get_db_connection()
+        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
+            # dmps_player_idが登録されているユーザーを取得
+            cur.execute("SELECT user_id, dmps_player_id, dmps_points FROM users WHERE dmps_player_id IS NOT NULL;")
+            users_to_update = cur.fetchall()
+
+            if not users_to_update:
+                print("[LOG] No users with DMPS Player ID registered.")
+                return
+
+            for user_data in users_to_update:
+                user_id = user_data['user_id']
+                dmps_player_id = user_data['dmps_player_id']
+                old_points = user_data['dmps_points'] if user_data['dmps_points'] is not None else 0
+
+                # スクレイピング関数を呼び出し
+                stats = await fetch_dmps_user_stats(dmps_player_id)
+
+                if stats:
+                    new_rank = stats['rank']
+                    new_points = stats['points']
+                    
+                    point_increase = new_points - old_points
+                    credits_to_grant = 0
+
+                    if point_increase > 0:
+                        credits_to_grant = point_increase * 10
+                        # クレジット付与通知をリストに追加
+                        member = bot.get_user(user_id) # ユーザーオブジェクトを取得
+                        if member:
+                            granted_notifications.append(f"{member.display_name}さん: +{credits_to_grant} GTV ({point_increase} pts up)")
+                        else:
+                            granted_notifications.append(f"ユーザーID {user_id}: +{credits_to_grant} GTV ({point_increase} pts up)")
+
+                    # DBを更新
+                    cur.execute("""
+                        UPDATE users SET dmps_rank = %s, dmps_points = %s, credits = credits + %s
+                        WHERE user_id = %s;
+                    """, (new_rank, new_points, credits_to_grant, user_id))
+                else:
+                    print(f"[LOG] Failed to fetch DMPS stats for UserID: {dmps_player_id}")
+        
+        conn.commit()
+
+        # 通知チャンネルに結果を送信
+        if granted_notifications and BIRTHDAY_CHANNEL_ID:
+            channel = bot.get_channel(BIRTHDAY_CHANNEL_ID)
+            if channel:
+                message = "DMPSポイント増加によるGTVクレジット付与結果だぞ！\n" + "\n".join(granted_notifications)
+                await channel.send(message)
+        elif not granted_notifications:
+            print("[LOG] No DMPS points increased today.")
+
+    except Exception as e:
+        if conn: conn.rollback()
+        print(f"DB Error in update_dmps_points_task: {e}")
+    finally:
+        if conn: conn.close()
 
 # --- メイン実行ブロック ---
 if __name__ == '__main__':
