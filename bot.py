@@ -7,10 +7,11 @@ from flask import Flask
 from utils.database import setup_database
 
 # =====================
-# 環境変数（Render対応）
+# 環境変数
 # =====================
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
+RENDER = os.getenv("RENDER")  # Renderなら自動で入る
 
 # --- Flask (Keep Alive) ---
 app = Flask(__name__)
@@ -32,7 +33,7 @@ class MyBot(commands.Bot):
     def __init__(self):
         intents = discord.Intents.default()
         intents.members = True
-        intents.message_content = True  # prefixコマンド使うなら必須
+        intents.message_content = True
         super().__init__(command_prefix="!", intents=intents)
 
     async def setup_hook(self):
@@ -54,12 +55,16 @@ class MyBot(commands.Bot):
         except Exception as e:
             print(f"Database setup failed: {e}")
 
-        # ---- スラッシュコマンド同期（1回だけ）----
-        try:
-            synced = await self.tree.sync()
-            print(f"Synced {len(synced)} command(s)")
-        except Exception as e:
-            print(f"Command sync failed: {e}")
+        # ---- スラッシュコマンド同期 ----
+        # ⚠ Renderでは絶対にsyncしない
+        if not RENDER:
+            try:
+                synced = await self.tree.sync()
+                print(f"Synced {len(synced)} command(s)")
+            except Exception as e:
+                print(f"Command sync failed: {e}")
+        else:
+            print("Render環境のため command sync をスキップしました")
 
     async def on_ready(self):
         print(f"Logged in as {self.user} (ID: {self.user.id})")
