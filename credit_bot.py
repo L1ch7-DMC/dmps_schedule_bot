@@ -60,4 +60,8 @@ if __name__ == '__main__':
         print("エラー: .envファイルまたは環境変数で DATABASE_URL を設定してください。")
     else:
         bot = CreditBot()
+        # Add a delay before running the bot to mitigate immediate rate-limiting during restarts
+        # This is a temporary measure for debugging.
+        import asyncio
+        asyncio.run(asyncio.sleep(10))
         bot.run(TOKEN_CREDIT)

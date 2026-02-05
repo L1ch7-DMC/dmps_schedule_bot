@@ -5,6 +5,7 @@ from typing import Optional, Annotated, Dict
 import random
 import asyncio
 import math
+import discord.utils
 
 from config import GACHA_PRIZES, GACHA_RATES
 from database import get_db_connection, get_user_profile

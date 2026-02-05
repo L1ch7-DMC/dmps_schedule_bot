@@ -68,4 +68,8 @@ if __name__ == '__main__':
     else:
         keep_alive_thread() # Start Flask server for keep-alive
         bot = MainBot()
+        # Add a delay before running the bot to mitigate immediate rate-limiting during restarts
+        # This is a temporary measure for debugging.
+        import asyncio
+        asyncio.run(asyncio.sleep(10)) 
         bot.run(TOKEN_MAIN)
