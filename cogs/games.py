@@ -6,9 +6,9 @@ import random
 import asyncio
 import math
 
-from ..config import GACHA_PRIZES, GACHA_RATES
-from ..database import get_db_connection, get_user_profile
-from ..utils.helpers import format_emojis
+from config import GACHA_PRIZES, GACHA_RATES
+from database import get_db_connection, get_user_profile
+from utils.helpers import format_emojis
 
 # チャンネルごとの最後のスロットメッセージを記録する辞書
 last_slot_messages = {}

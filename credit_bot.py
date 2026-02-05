@@ -3,7 +3,7 @@ from discord.ext import commands
 import os
 import asyncio
 
-from config import TOKEN, DATABASE_URL
+from config import TOKEN_CREDIT, DATABASE_URL
 from database import setup_database
 from cogs.games import Games
 from cogs.admin_credits import AdminCredits
@@ -53,10 +53,10 @@ class CreditBot(commands.Bot):
                 await interaction.response.send_message("コマンドの実行中にエラーが発生しました。", ephemeral=True)
 
 if __name__ == '__main__':
-    if TOKEN is None:
-        print("エラー: .envファイルで DISCORD_BOT_TOKEN を設定してください。")
+    if TOKEN_CREDIT is None:
+        print("エラー: .envファイルで DISCORD_BOT_TOKEN_CREDIT を設定してください。")
     elif DATABASE_URL is None:
         print("エラー: .envファイルまたは環境変数で DATABASE_URL を設定してください。")
     else:
         bot = CreditBot()
-        bot.run(TOKEN)
+        bot.run(TOKEN_CREDIT)

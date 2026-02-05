@@ -3,8 +3,8 @@ from discord.ext import tasks, commands
 from datetime import datetime, timedelta
 import psycopg2.extras
 
-from ..config import JST, TAX_BRACKETS, TAX_COLLECTION_TIME, BIRTHDAY_CHANNEL_ID
-from ..database import get_db_connection
+from config import JST, TAX_BRACKETS, TAX_COLLECTION_TIME, BIRTHDAY_CHANNEL_ID
+from database import get_db_connection
 
 @tasks.loop(time=TAX_COLLECTION_TIME)
 async def collect_income_tax(bot: commands.Bot):

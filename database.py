@@ -1,7 +1,7 @@
 import psycopg2
 import psycopg2.extras
 import os
-from .config import DATABASE_URL, PROFILE_ITEMS
+from config import DATABASE_URL, PROFILE_ITEMS
 
 def get_db_connection():
     if not DATABASE_URL:

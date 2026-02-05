@@ -4,9 +4,9 @@ from discord import Interaction, app_commands, Embed
 from typing import Optional
 from datetime import datetime
 
-from ..database import get_db_connection, get_user_profile
-from ..utils.web_scraper import fetch_and_parse_tournaments, fetch_dmps_user_stats
-from ..config import JST
+from database import get_db_connection, get_user_profile
+from utils.web_scraper import fetch_and_parse_tournaments, fetch_dmps_user_stats
+from config import JST
 
 class DMPSInfo(commands.Cog):
     def __init__(self, bot: commands.Bot):

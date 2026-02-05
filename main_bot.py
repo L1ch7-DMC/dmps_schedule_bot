@@ -3,7 +3,7 @@ from discord.ext import commands
 import os
 import asyncio
 
-from config import TOKEN, DATABASE_URL
+from config import TOKEN_MAIN, DATABASE_URL
 from database import setup_database
 from keep_alive import keep_alive_thread
 
@@ -60,11 +60,11 @@ class MainBot(commands.Bot):
                 await interaction.response.send_message("コマンドの実行中にエラーが発生しました。", ephemeral=True)
 
 if __name__ == '__main__':
-    if TOKEN is None:
+    if TOKEN_MAIN is None:
         print("エラー: .envファイルで DISCORD_BOT_TOKEN を設定してください。")
     elif DATABASE_URL is None:
         print("エラー: .envファイルまたは環境変数で DATABASE_URL を設定してください。")
     else:
         keep_alive_thread() # Start Flask server for keep-alive
         bot = MainBot()
-        bot.run(TOKEN)
+        bot.run(TOKEN_MAIN)

@@ -4,7 +4,8 @@ from datetime import datetime, date, time as dt_time, timedelta, timezone
 
 # --- 設定 ---
 load_dotenv()
-TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+TOKEN_CREDIT = os.getenv('DISCORD_BOT_TOKEN_CREDIT')
+TOKEN_MAIN = os.getenv('DISCORD_BOT_TOKEN_MAIN')
 DATABASE_URL = os.getenv('DATABASE_URL')
 CHANNEL_ID = int(os.getenv('DISCORD_CHANNEL_ID')) if os.getenv('DISCORD_CHANNEL_ID') else 0
 ADMIN_ROLE_NAMES_STR = os.getenv('ADMIN_ROLE_NAMES')

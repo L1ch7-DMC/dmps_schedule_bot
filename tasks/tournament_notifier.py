@@ -3,8 +3,8 @@ from discord.ext import tasks, commands
 from datetime import datetime
 import asyncio
 
-from ..config import JST, CHANNEL_ID, NOTIFY_TIME
-from ..utils.web_scraper import fetch_and_parse_tournaments
+from config import JST, CHANNEL_ID, NOTIFY_TIME
+from utils.web_scraper import fetch_and_parse_tournaments
 
 async def send_today_tournaments(channel):
     all_tournaments = fetch_and_parse_tournaments()

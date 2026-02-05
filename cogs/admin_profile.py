@@ -4,9 +4,9 @@ from discord import Interaction, app_commands, ui, TextStyle, Embed
 from typing import Optional
 import re
 
-from ..config import ADMIN_ROLES, PROFILE_ITEMS, NUMERIC_ITEMS
-from ..database import get_db_connection, get_user_profile
-from .profile import AchievementModal, PersonalInfoModal, RegisterView # Re-use modals/views
+from config import ADMIN_ROLES, PROFILE_ITEMS, NUMERIC_ITEMS
+from database import get_db_connection, get_user_profile
+from cogs.profile import AchievementModal, PersonalInfoModal, RegisterView # Re-use modals/views
 
 class AdminProfile(commands.Cog):
     def __init__(self, bot: commands.Bot):

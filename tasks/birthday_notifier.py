@@ -3,8 +3,8 @@ from discord.ext import tasks, commands
 from datetime import datetime
 import psycopg2.extras
 
-from ..config import JST, BIRTHDAY_NOTIFY_TIME, BIRTHDAY_CHANNEL_ID
-from ..database import get_db_connection
+from config import JST, BIRTHDAY_NOTIFY_TIME, BIRTHDAY_CHANNEL_ID
+from database import get_db_connection
 
 @tasks.loop(time=BIRTHDAY_NOTIFY_TIME)
 async def check_birthdays_today(bot: commands.Bot):

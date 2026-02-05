@@ -3,8 +3,8 @@ from discord.ext import commands
 from discord import Interaction, app_commands, Embed
 from typing import Optional
 
-from ..config import ADMIN_ROLES
-from ..database import get_db_connection
+from config import ADMIN_ROLES
+from database import get_db_connection
 
 class AdminCredits(commands.Cog):
     def __init__(self, bot: commands.Bot):

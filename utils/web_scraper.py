@@ -6,7 +6,7 @@ import time
 from datetime import datetime, date, time as dt_time, timedelta, timezone
 from typing import Optional, Dict
 
-from ..config import BASE_URL, DMPS_BASE_URL, JST
+from config import BASE_URL, DMPS_BASE_URL, JST
 
 def get_tonamel_url(details_page_url):
     try:

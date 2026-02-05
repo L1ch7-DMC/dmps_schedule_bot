@@ -2,9 +2,9 @@ import discord
 from discord.ext import tasks, commands
 import psycopg2.extras
 
-from ..config import JST, DMPS_UPDATE_TIME, BIRTHDAY_CHANNEL_ID
-from ..database import get_db_connection
-from ..utils.web_scraper import fetch_dmps_user_stats
+from config import JST, DMPS_UPDATE_TIME, BIRTHDAY_CHANNEL_ID
+from database import get_db_connection
+from utils.web_scraper import fetch_dmps_user_stats
 
 @tasks.loop(time=DMPS_UPDATE_TIME)
 async def dmps_credit_updater(bot: commands.Bot):

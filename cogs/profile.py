@@ -3,8 +3,8 @@ from discord.ext import commands
 from discord import Interaction, app_commands, ui, TextStyle, Embed
 from typing import Optional
 
-from ..database import get_db_connection, get_user_profile
-from ..config import PROFILE_ITEMS, NUMERIC_ITEMS
+from database import get_db_connection, get_user_profile
+from config import PROFILE_ITEMS, NUMERIC_ITEMS
 
 class AchievementModal(ui.Modal, title='実績情報の登録'):
     def __init__(self, target_user: discord.Member, user_data: Optional[dict]):
