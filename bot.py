@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 import discord
 from discord.ext import tasks, commands
 from discord import Interaction, app_commands, ui, TextStyle, Embed
-from typing import Optional, Annotated
+from typing import Optional, Annotated, Dict
 from dotenv import load_dotenv
 from datetime import datetime, date, time as dt_time, timedelta, timezone
 from urllib.parse import urljoin
