@@ -1449,7 +1449,7 @@ async def update_dmps_points_task():
         if granted_notifications and BIRTHDAY_CHANNEL_ID:
             channel = bot.get_channel(BIRTHDAY_CHANNEL_ID)
             if channel:
-                message = "DMPSポイント増加によるGTVクレジット付与結果だぞ！\n" + "\n".join(granted_notifications)
+                message = "トーナメントランキングポイント増加によるGTV付与だぞ！みんなお疲れ様だ！\n" + "\n".join(granted_notifications)
                 await channel.send(message)
         elif not granted_notifications:
             print("[LOG] No DMPS points increased today.")
